@@ -1,0 +1,5666 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>AlphaFind + PANTHER + Pfam + protein notes Viewer</title>
+  <!-- viewer_v18: viewer_v17 + fixed Compare popup initialization -->
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #222;
+      background: white;
+    }
+
+    #app {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 350px;
+      height: 100vh;
+    }
+
+    #main {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #ddd;
+      background: #fafafa;
+      flex-wrap: wrap;
+    }
+
+    button,
+    select,
+    input[type="number"] {
+      padding: 6px 10px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      background: white;
+      font: inherit;
+    }
+
+    input[type="number"] {
+      width: 72px;
+    }
+
+    .toolbar-check {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #f0f0f0;
+    }
+
+    button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
+    .toolbar-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding-left: 8px;
+      border-left: 1px solid #ddd;
+    }
+
+    .toolbar-label {
+      font-size: 12px;
+      color: #666;
+    }
+
+    #breadcrumb {
+      flex: 1;
+      min-width: 220px;
+      font-size: 13px;
+      color: #555;
+    }
+
+    .breadcrumb-item {
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-color: #ccc;
+    }
+
+    .breadcrumb-item:hover {
+      color: #b00000;
+    }
+
+    #status {
+      color: #777;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    #tree-wrap {
+      flex: 1 1 auto;
+      height: 0;
+      min-height: 0;
+      position: relative;
+      overflow: auto;
+      background: white;
+      cursor: grab;
+      user-select: none;
+      touch-action: none;
+      overscroll-behavior: contain;
+    }
+
+    #tree-wrap.dragging {
+      cursor: grabbing;
+    }
+
+    svg {
+      display: block;
+      min-width: 100%;
+      min-height: 100%;
+    }
+
+    .link {
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .link.context {
+      stroke: #c2c2c2;
+      stroke-width: 1.6;
+    }
+
+    .link.path {
+      stroke: #e24a3b;
+      stroke-width: 2.2;
+    }
+
+    .link.hit {
+      stroke: #990000;
+      stroke-width: 3;
+    }
+
+    .node-hitbox {
+      fill: transparent !important;
+      stroke: none !important;
+      pointer-events: all;
+    }
+
+    /*
+      Vnější barevný disk = hodnota TM-score.
+      Vnitřní tmavý disk zůstává neutrální, aby bílé + / − bylo dobře vidět.
+    */
+    .score-ring {
+      stroke: none !important;
+      pointer-events: none;
+    }
+
+    /*
+      PANTHER evidence = barevný obrys kolem TM-score disku.
+      TM-score tak zůstává zachovaný uvnitř:
+      - světle modrá = člen celé PANTHER family
+      - tmavě modrá = člen stejné subfamily jako query
+      - fialová = přímý AlphaFind hit + PANTHER evidence ve stejném taxonu
+    */
+    .evidence-ring {
+      fill: none !important;
+      stroke-width: 4px !important;
+      pointer-events: none;
+    }
+
+    .evidence-ring.panther-family {
+      stroke: #78b7e5 !important;
+    }
+
+    .evidence-ring.panther-subfamily {
+      stroke: #175a9c !important;
+    }
+
+    .evidence-ring.both {
+      stroke: #8e44ad !important;
+    }
+
+    /* Pfam evidence = samostatný zelený čtvereček vedle uzlu. */
+    .pfam-marker {
+      fill: #2e8b57;
+      stroke: white;
+      stroke-width: 1.5px;
+      pointer-events: none;
+    }
+
+    .pfam-key {
+      width: 11px;
+      height: 11px;
+      display: inline-block;
+      background: #2e8b57;
+      border-radius: 2px;
+      flex: 0 0 auto;
+    }
+
+    /* InterPro family evidence = samostatný tmavě zelený diamant. */
+    .interpro-family-marker {
+      fill: #147a4b;
+      stroke: white;
+      stroke-width: 1.3;
+      pointer-events: none;
+    }
+
+    .interpro-key {
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      background: #147a4b;
+      border: 1px solid white;
+      box-shadow: 0 0 0 1px #147a4b;
+      transform: rotate(45deg);
+      margin: 0 5px 0 3px;
+      vertical-align: middle;
+      flex: 0 0 auto;
+    }
+
+    .visible-circle {
+      fill: #333 !important;
+    }
+
+    .node circle {
+      stroke: white;
+      stroke-width: 1.5;
+    }
+
+    .node.context circle:not(.score-ring):not(.visible-circle):not(.node-hitbox) {
+      fill: #aaa;
+    }
+
+    .node.path circle:not(.score-ring):not(.visible-circle):not(.node-hitbox) {
+      fill: #e24a3b;
+    }
+
+    .node.hit circle:not(.score-ring):not(.visible-circle):not(.node-hitbox) {
+      fill: #990000;
+    }
+
+    .node.expandable .visible-circle {
+      stroke: #222;
+      stroke-width: 2.6;
+      cursor: pointer;
+    }
+
+    .node text {
+      font-size: 12px;
+      dominant-baseline: middle;
+      paint-order: stroke;
+      stroke: white;
+      stroke-width: 4px;
+      stroke-linejoin: round;
+      pointer-events: none;
+    }
+
+    .node.path text,
+    .node.hit text {
+      font-weight: 600;
+    }
+
+    .expand-mark {
+      font-size: 14px !important;
+      font-weight: 900;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
+      fill: white;
+      stroke: none !important;
+      paint-order: normal !important;
+    }
+
+    .center-node circle {
+      stroke: #222;
+      stroke-width: 2.5;
+    }
+
+    .center-label {
+      font-size: 15px;
+      font-weight: 700;
+      paint-order: stroke;
+      stroke: white;
+      stroke-width: 4px;
+    }
+
+    #side {
+      border-left: 1px solid #ddd;
+      padding: 16px;
+      overflow: auto;
+      background: #fbfbfb;
+    }
+
+    #side h2 {
+      margin-top: 0;
+      font-size: 18px;
+    }
+
+    .muted {
+      color: #777;
+    }
+
+    .info-row {
+      margin: 10px 0;
+    }
+
+    .info-label {
+      color: #666;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    .info-value {
+      margin-top: 2px;
+      font-size: 15px;
+      word-break: break-word;
+    }
+
+    .score-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 7px 12px;
+      margin-top: 6px;
+      font-size: 13px;
+    }
+
+    .hits-list {
+      margin: 8px 0 0 0;
+      padding-left: 20px;
+      font-size: 13px;
+    }
+
+    .hits-list li {
+      margin: 6px 0;
+    }
+
+    .protein-id-draggable {
+      display: inline-block;
+      cursor: grab;
+      padding: 1px 4px;
+      margin-left: -4px;
+      border-radius: 4px;
+      border: 1px dashed transparent;
+      user-select: text;
+    }
+
+    .protein-id-draggable:hover {
+      background: #eef6ff;
+      border-color: #7aa7d9;
+    }
+
+    .protein-id-draggable:active {
+      cursor: grabbing;
+    }
+
+    .mol-hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #777;
+    }
+
+    .side-action {
+      width: 100%;
+      margin-top: 12px;
+    }
+
+    #legend {
+      margin-top: 22px;
+      padding-top: 14px;
+      border-top: 1px solid #ddd;
+    }
+
+    .legend-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin: 7px 0;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: inline-block;
+      flex: 0 0 auto;
+    }
+
+    .dot.context { background: #aaa; }
+    .dot.panther-family { background: #78b7e5; }
+    .dot.panther-subfamily { background: #175a9c; }
+    .dot.both { background: #8e44ad; }
+
+    .tm-legend {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #555;
+    }
+
+    .tm-gradient {
+      height: 12px;
+      margin-top: 6px;
+      border-radius: 999px;
+      border: 1px solid #bbb;
+      background: linear-gradient(
+        to right,
+        #f4df4e 0%,
+        #f5a43a 45%,
+        #e4572e 70%,
+        #b71c1c 100%
+      );
+    }
+
+    .tm-legend-labels {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 3px;
+      font-size: 11px;
+      color: #777;
+    }
+
+    #error {
+      position: absolute;
+      inset: 20px;
+      display: none;
+      padding: 16px;
+      background: #fff3f3;
+      border: 1px solid #d88;
+      border-radius: 8px;
+      white-space: pre-wrap;
+      overflow: auto;
+    }
+
+
+    input[type="text"] {
+      padding: 6px 10px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      background: white;
+      font: inherit;
+    }
+
+    #organism-search {
+      width: 190px;
+    }
+
+    #annotation-name {
+      width: 160px;
+    }
+
+    #annotation-color {
+      width: 34px;
+      height: 30px;
+      padding: 2px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+    }
+
+    .annotation-marker {
+      stroke: white;
+      stroke-width: 1.2;
+      pointer-events: none;
+    }
+
+    .annotation-mode-active {
+      background: #fff4cc !important;
+      border-color: #d6a400 !important;
+    }
+
+    .search-highlight {
+      stroke: #111;
+      stroke-width: 3;
+      fill: none;
+      pointer-events: none;
+    }
+
+    .annotation-summary {
+      display: inline-flex;
+      gap: 5px;
+      flex-wrap: wrap;
+      margin-top: 5px;
+    }
+
+    .annotation-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border: 1px solid #ddd;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #fafafa;
+    }
+
+    .annotation-chip-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+
+    .taxon-note-box {
+      width: 100%;
+      min-height: 110px;
+      box-sizing: border-box;
+      resize: vertical;
+      padding: 8px 10px;
+      border: 1px solid #c9c9c9;
+      border-radius: 7px;
+      font: inherit;
+      line-height: 1.35;
+      background: #fffef8;
+    }
+
+    .taxon-note-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 7px;
+      flex-wrap: wrap;
+    }
+
+    .taxon-note-status {
+      font-size: 11px;
+      color: #666;
+    }
+
+
+
+    #compare-selection-summary {
+      display: inline-flex;
+      gap: 5px;
+      align-items: center;
+      max-width: 430px;
+      flex-wrap: wrap;
+    }
+
+    .compare-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 7px;
+      border: 1px solid #c9d6e2;
+      border-radius: 999px;
+      background: #f4f8fc;
+      font-size: 11px;
+      max-width: 200px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .compare-hit-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 7px;
+      font-size: 11px;
+      color: #456;
+      white-space: nowrap;
+    }
+
+    .compare-hit-label input {
+      margin: 0;
+    }
+
+    .compare-query-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 4px;
+      font-size: 11px;
+      color: #456;
+      white-space: nowrap;
+    }
+
+    .compare-query-label input {
+      margin: 0;
+    }
+
+    .protein-hit {
+      padding: 8px 0 10px 0;
+      border-bottom: 1px solid #eceff3;
+    }
+
+    .protein-hit:last-child {
+      border-bottom: 0;
+    }
+
+    .protein-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #334155;
+      line-height: 1.45;
+    }
+
+    .protein-tools-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 6px;
+      margin-bottom: 4px;
+    }
+
+    .protein-chips {
+      margin-top: 6px;
+    }
+
+    .protein-tag-picker {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+
+    .protein-tag-picker-label {
+      font-size: 12px;
+      color: #556070;
+    }
+
+    .protein-tag-select {
+      min-width: 175px;
+      max-width: 240px;
+      padding: 5px 8px;
+      border: 1px solid #c9c9c9;
+      border-radius: 6px;
+      background: white;
+      font: inherit;
+      font-size: 12px;
+    }
+
+    .protein-tag-add-btn {
+      padding: 5px 9px;
+      border: 1px solid #c8d2dc;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+    }
+
+    .protein-tag-add-btn:hover {
+      background: #eef6ff;
+    }
+
+    .protein-tag-add-btn:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .protein-chip-remove {
+      border: 0;
+      background: transparent;
+      padding: 0 0 0 3px;
+      margin: 0;
+      cursor: pointer;
+      color: #667085;
+      font: inherit;
+      line-height: 1;
+    }
+
+    .protein-chip-remove:hover {
+      color: #a00000;
+      background: transparent;
+    }
+
+    .protein-short-label-input {
+      min-width: 230px;
+      flex: 1 1 240px;
+      padding: 5px 8px;
+      border: 1px solid #c9c9c9;
+      border-radius: 6px;
+      font: inherit;
+      background: #fffef8;
+    }
+
+    .protein-note-details {
+      margin-top: 6px;
+      padding: 6px 8px;
+      background: #fffef8;
+      border: 1px solid #eadfb8;
+      border-radius: 8px;
+    }
+
+    .protein-note-details summary {
+      cursor: pointer;
+      color: #6b5b18;
+      font-size: 12px;
+      user-select: none;
+    }
+
+    .protein-long-note-textarea {
+      width: 100%;
+      min-height: 90px;
+      box-sizing: border-box;
+      resize: vertical;
+      margin-top: 7px;
+      padding: 8px 10px;
+      border: 1px solid #c9c9c9;
+      border-radius: 7px;
+      font: inherit;
+      line-height: 1.35;
+      background: #fff;
+    }
+
+    .protein-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 7px;
+    }
+
+    .protein-note-save-btn,
+    .protein-note-clear-btn,
+    .protein-link-btn {
+      padding: 4px 8px;
+      border: 1px solid #c8d2dc;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+      text-decoration: none;
+      color: #1f2937;
+    }
+
+    .protein-link-btn {
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .protein-note-save-btn:hover,
+    .protein-note-clear-btn:hover,
+    .protein-link-btn:hover {
+      background: #eef6ff;
+    }
+
+    .protein-filter-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: #556070;
+    }
+
+    .protein-filter-row select {
+      min-width: 180px;
+    }
+
+    .protein-note-status {
+      font-size: 11px;
+      color: #666;
+    }
+
+    .filter-summary {
+      margin: 0 0 14px 0;
+      padding: 10px 11px;
+      border: 1px solid #cfd8e3;
+      border-radius: 8px;
+      background: #f5f8fc;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .filter-summary-title {
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .filter-summary-list {
+      margin: 5px 0 0 18px;
+      padding: 0;
+    }
+
+    .filter-summary-list li {
+      margin: 3px 0;
+    }
+
+    .filter-summary-section + .filter-summary-section {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #dde4ec;
+    }
+
+    .filter-label-note {
+      width: 100%;
+      min-height: 86px;
+      box-sizing: border-box;
+      resize: vertical;
+      margin-top: 8px;
+      padding: 7px 9px;
+      border: 1px solid #c9d4df;
+      border-radius: 7px;
+      background: white;
+      font: inherit;
+      line-height: 1.35;
+    }
+
+    .filter-label-note-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 6px;
+      flex-wrap: wrap;
+    }
+
+    .filter-label-note-save {
+      padding: 4px 8px;
+      border: 1px solid #c8d2dc;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+    }
+
+    .filter-label-note-save:hover {
+      background: #eef6ff;
+    }
+
+    .filter-label-note-status {
+      font-size: 11px;
+      color: #667085;
+    }
+
+    @media (max-width: 900px) {
+      #app {
+        grid-template-columns: 1fr;
+        grid-template-rows: minmax(0, 1fr) auto;
+      }
+
+      #side {
+        border-left: 0;
+        border-top: 1px solid #ddd;
+        max-height: 36vh;
+      }
+    }
+  </style>
+</head>
+
+<body>
+<div id="app">
+  <div id="main">
+    <div id="toolbar">
+      <button id="overview-btn">Celkový přehled</button>
+      <button id="collapse-btn">Sbalit vše</button>
+      <button id="back-btn">← Zpět</button>
+      <button id="mol-workspace-btn" title="Otevře samostatné Mol* okno pro přetahování UniProt ID">🧬 Mol* workspace</button>
+
+      <div class="toolbar-group" id="compare-tools">
+        <span class="toolbar-label">Compare:</span>
+        <span id="compare-selection-summary"><span class="muted">vyber 2 proteiny</span></span>
+        <button id="compare-btn" type="button" disabled title="Superponuje dva vybrané proteiny v samostatném Mol* okně">Compare</button>
+        <button id="compare-clear-btn" type="button" title="Zruší výběr pro Compare">×</button>
+        <label class="compare-query-label" title="Přidat jako referenci přímo query protein projektu">
+          <input id="compare-query-checkbox" type="checkbox" />
+          query
+        </label>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Projekt:</span>
+        <select id="project-select">
+          <option value="">Načítám projekty…</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Zobrazení:</span>
+        <select id="view-filter">
+          <option value="hits" selected>Jen evidence</option>
+          <option value="panther">Jen PANTHER family</option>
+          <option value="pfam">Jen Pfam family</option>
+          <option value="family">Jen InterPro family</option>
+          <option value="alpha-only">Jen AlphaFind hity mimo PANTHER family</option>
+          <option value="alpha-outside-pfam">Jen AlphaFind hity mimo Pfam family</option>
+          <option value="alpha-outside-family">Jen AlphaFind hity mimo InterPro family</option>
+          <option value="context">Evidence + kontext</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Názvy:</span>
+        <select id="label-mode">
+          <option value="latin" selected>Latina</option>
+          <option value="cs-latin">Čeština + latina</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <label class="toolbar-check" title="Po zapnutí zůstanou jako AlphaFind evidence jen hity, které splní zvolený práh.">
+          <input id="score-filter-enabled" type="checkbox" />
+          Filtrovat hity
+        </label>
+        <select id="score-filter-metric" title="Metrika pro filtrování AlphaFind hitů">
+          <option value="tm" selected>TM-score</option>
+          <option value="aligned">Aligned residues</option>
+          <option value="identity">Sequence identity</option>
+        </select>
+        <span class="toolbar-label">≥</span>
+        <input id="score-filter-threshold" type="number" min="0" max="1" step="0.01" value="0.70" title="Minimální hodnota pro zobrazení hitu" />
+      </div>
+
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Organismus:</span>
+        <input id="organism-search" type="text" list="organism-search-list"
+               placeholder="latinsky nebo česky…" autocomplete="off" />
+        <datalist id="organism-search-list"></datalist>
+        <button id="organism-search-btn" title="Najde taxon, rozbalí jeho větev a otevře detail">Najít</button>
+        <button id="organism-search-clear-btn" title="Zruší zvýraznění hledaného taxonu">×</button>
+      </div>
+
+      <div class="toolbar-group" id="annotation-tools">
+        <label class="toolbar-check" title="V režimu označování kliknutím přiřadíš aktivní štítek taxonu. Další kliknutí jej zase odebere.">
+          <input id="annotation-mode" type="checkbox" />
+          Režim štítků
+        </label>
+        <select id="annotation-active" title="Aktivní uložený štítek">
+          <option value="">— žádný štítek —</option>
+        </select>
+        <input id="annotation-name" type="text" placeholder="nový štítek…" />
+        <input id="annotation-color" type="color" value="#2f80ed" title="Barva štítku" />
+        <button id="annotation-save-btn" title="Uloží nový štítek nebo přejmenuje aktivní">Uložit</button>
+        <button id="annotation-delete-btn" title="Smaže aktivní štítek a jeho přiřazení">Smazat</button>
+        <span class="toolbar-label">Taxonový štítek:</span>
+        <select id="annotation-filter" title="Zobrazí jen větve s taxony označenými tímto štítkem">
+          <option value="">bez filtru</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Proteinový štítek:</span>
+        <select id="protein-tree-filter" title="Zobrazí jen taxonomické větve obsahující alespoň jeden protein s tímto štítkem">
+          <option value="">bez filtru</option>
+        </select>
+      </div>
+
+      <div class="toolbar-group">
+        <span class="toolbar-label">Barvit podle:</span>
+        <select id="color-metric">
+          <option value="tm" selected>TM-score</option>
+          <option value="aligned">Aligned residues</option>
+          <option value="identity">Sequence identity</option>
+        </select>
+      </div>
+
+      <div id="breadcrumb"></div>
+      <span id="status"></span>
+    </div>
+
+    <div id="tree-wrap">
+      <svg id="tree"></svg>
+      <div id="error"></div>
+    </div>
+  </div>
+
+  <aside id="side">
+    <h2>Taxon</h2>
+
+    <div id="filter-summary" class="filter-summary" style="display:none;"></div>
+
+    <div id="info">
+      <p class="muted">Klikni na uzel ve stromu.</p>
+    </div>
+
+    <div id="legend">
+      <strong>Legenda</strong>
+
+      <div class="tm-legend">
+        <div id="score-legend-title">
+          Barva vnějšího kolečka = nejlepší TM-score v celé větvi pod tímto taxonem
+        </div>
+
+        <div class="tm-gradient"></div>
+
+        <div class="tm-legend-labels" id="score-legend-labels">
+          <span>0.50</span>
+          <span>0.60</span>
+          <span>0.70</span>
+          <span>0.80</span>
+          <span>0.90</span>
+          <span>1.00</span>
+        </div>
+      </div>
+
+      <div class="legend-row" style="margin-top:14px;">
+        <span class="dot panther-family"></span>
+        PANTHER family member
+      </div>
+
+      <div class="legend-row">
+        <span class="dot panther-subfamily"></span>
+        Stejná PANTHER subfamily jako query
+      </div>
+
+      <div class="legend-row">
+        <span class="dot both"></span>
+        Přímý AlphaFind hit + PANTHER
+      </div>
+
+      <div class="legend-row">
+        <span class="pfam-key"></span>
+        Pfam family member
+      </div>
+
+      <div class="legend-row">
+        <span class="interpro-key"></span>
+        InterPro family member
+      </div>
+
+      <div class="legend-row">
+        <span class="dot context"></span>
+        Taxonomický kontext bez přímé evidence
+      </div>
+
+      <p class="muted" id="panther-coverage-note" style="font-size:12px;">
+        PANTHER evidence se načte, pokud je pro projekt dostupná.
+      </p>
+
+      <p class="muted" id="pfam-coverage-note" style="font-size:12px;">
+        Pfam evidence se načte, pokud je pro projekt dostupná.
+      </p>
+
+      <p class="muted" id="family-coverage-note" style="font-size:12px;">
+        InterPro family evidence se načte, pokud je pro projekt dostupná.
+      </p>
+
+      <p class="muted" id="score-legend-note" style="font-size:12px;">
+        Žlutá = nižší hodnota, oranžová = střední, červená = vysoká.
+        U nadřazeného taxonu se použije nejlepší hodnota z aktuálně
+        zobrazených AlphaFind hitů v jeho podstromu.
+        Bílé + znamená „lze rozbalit“, bílé − znamená „je rozbaleno“.
+      </p>
+    </div>
+  </aside>
+</div>
+
+<script>
+
+  // ============================================================
+  // Mol* WORKSPACE + COMPARE (v12 shared workspace)
+  // ============================================================
+
+  let molWorkspaceWindow = null;
+  let compareWindow = null;
+  let compareSelection = [];
+  let includeQueryInCompare = false;
+
+  const compareSummaryEl = document.getElementById('compare-selection-summary');
+  const compareButton = document.getElementById('compare-btn');
+  const compareClearButton = document.getElementById('compare-clear-btn');
+  const compareQueryCheckbox = document.getElementById('compare-query-checkbox');
+
+  function compareKey(item) {
+    return String(item?.accession || item || '').trim().toUpperCase();
+  }
+
+  function cleanCompareItem(item) {
+    const accession = compareKey(item?.accession || item?.protein_id || item?.proteinId || item);
+    if (!accession) return null;
+    return {
+      accession,
+      proteinName: String(item?.proteinName || item?.protein_name || ''),
+      organism: String(item?.organism || ''),
+      tm: finiteNumber(item?.tm),
+      aligned: finiteNumber(item?.aligned),
+      identity: finiteNumber(item?.identity),
+      shortLabel: String(item?.shortLabel || ''),
+      tagSummary: String(item?.tagSummary || ''),
+      source: String(item?.source || 'hit')
+    };
+  }
+
+  function currentQueryItem() {
+    const meta = currentProjectMeta || {};
+    const panther = currentPantherEvidence || {};
+    const pfam = currentPfamEvidence || {};
+
+    const candidates = [
+      meta.query_uniprot,
+      meta.query_accession,
+      meta.query_protein_id,
+      meta.query_id,
+      meta.uniprot_accession,
+      meta.protein_id,
+      panther.query_uniprot,
+      panther.query_accession,
+      panther.query_protein_id,
+      pfam.query_uniprot,
+      pfam.query_accession
+    ];
+
+    let accession = '';
+    for (const candidate of candidates) {
+      accession = compareKey(candidate);
+      if (accession) break;
+    }
+    if (!accession) return null;
+
+    return cleanCompareItem({
+      accession,
+      proteinName: meta.query_protein_name || meta.query_name || panther.query_name || pfam.query_name || accession,
+      organism: meta.query_organism || meta.query_taxon_name || meta.organism || panther.query_organism || pfam.query_organism || '',
+      source: 'query'
+    });
+  }
+
+  function isCompareSelected(accession) {
+    const key = compareKey(accession);
+    return compareSelection.some(item => compareKey(item) === key);
+  }
+
+  function effectiveCompareItems() {
+    const items = [];
+    if (includeQueryInCompare) {
+      const query = currentQueryItem();
+      if (query) items.push(query);
+    }
+    for (const item of compareSelection) {
+      if (items.length >= 2) break;
+      items.push(item);
+    }
+    return items.slice(0, 2);
+  }
+
+  function compareRequirementText() {
+    if (includeQueryInCompare) {
+      return currentQueryItem() ? 'query + vyber 1 protein' : 'query protein není v projektu znám';
+    }
+    return 'vyber 2 proteiny';
+  }
+
+  function updateCompareUI() {
+    if (!compareSummaryEl || !compareButton) return;
+
+    const effective = effectiveCompareItems();
+    if (effective.length === 0) {
+      compareSummaryEl.innerHTML = '<span class="muted">' + escapeHtml(compareRequirementText()) + '</span>';
+    } else {
+      compareSummaryEl.innerHTML = effective.map((item, index) => {
+        const prefix = item.source === 'query' ? 'Q.' : (index + 1) + '.';
+        const title = [item.accession, item.proteinName, item.organism, item.tagSummary || item.shortLabel].filter(Boolean).join(' — ');
+        return '<span class="compare-chip" title="' + escapeHtml(title) + '">' +
+          prefix + ' ' + escapeHtml(item.accession) +
+          (item.organism ? ' · ' + escapeHtml(item.organism) : '') +
+          (item.source === 'query' ? ' · query' : '') +
+          '</span>';
+      }).join('');
+    }
+
+    if (compareQueryCheckbox) {
+      const hasQuery = Boolean(currentQueryItem());
+      compareQueryCheckbox.disabled = !hasQuery;
+      compareQueryCheckbox.checked = includeQueryInCompare && hasQuery;
+      compareQueryCheckbox.title = hasQuery
+        ? 'Přidat query protein projektu jako pevnou referenci'
+        : 'Viewer nezná query accession z project.json / evidence';
+    }
+
+    compareButton.disabled = effective.length !== 2;
+    compareButton.title = includeQueryInCompare
+      ? 'Porovná query protein s vybraným proteinem'
+      : 'Superponuje dva vybrané proteiny v samostatném Mol* okně';
+
+    document.querySelectorAll('.compare-hit-checkbox').forEach(box => {
+      box.checked = isCompareSelected(box.dataset.proteinId);
+    });
+  }
+
+  function toggleCompareItem(item, checked) {
+    const normalized = cleanCompareItem(item);
+    if (!normalized) return;
+
+    const key = compareKey(normalized.accession);
+    compareSelection = compareSelection.filter(x => compareKey(x) !== key);
+
+    if (checked) {
+      const maxItems = includeQueryInCompare ? 1 : 2;
+      if (compareSelection.length >= maxItems) compareSelection.shift();
+      compareSelection.push(normalized);
+    }
+
+    updateCompareUI();
+  }
+
+  function molWorkspaceHtml() {
+    return `<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mol* workspace — Lucka Structures</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/molstar@5.11.0/build/viewer/molstar.css" />
+  <style>
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { background:#f5f7fa; color:#1f2937; }
+    #mol-topbar { height:64px; box-sizing:border-box; display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid #d0d7df; background:#fbfcfe; }
+    #mol-topbar input { width:150px; padding:7px 9px; border:1px solid #aab5c1; border-radius:6px; font:inherit; text-transform:uppercase; }
+    #mol-topbar button { padding:7px 10px; border:1px solid #aab5c1; border-radius:6px; background:white; cursor:pointer; font:inherit; }
+    #mol-topbar button:hover { background:#eef2f6; }
+    #mol-drop { padding:7px 10px; border:2px dashed #8aa6bf; border-radius:7px; color:#425a70; background:#eef6ff; font-size:12px; }
+    body.drag-over #mol-drop { background:#dceeff; border-color:#2e6fa3; }
+    #mol-status { flex:1; min-width:130px; font-size:12px; color:#556070; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    #loaded-bar { position:absolute; left:0; right:0; top:64px; height:42px; box-sizing:border-box; display:flex; align-items:center; gap:6px; padding:5px 9px; background:#f7fafc; border-bottom:1px solid #dce3ea; overflow-x:auto; }
+    .loaded-chip small { color:#667085; }
+    .loaded-chip { flex:0 0 auto; padding:5px 8px; border:1px solid #c9d6e2; border-radius:999px; background:white; cursor:pointer; font-size:11px; }
+    .loaded-chip:hover { background:#eef6ff; }
+    #molstar-root { position:absolute; left:0; right:0; top:106px; bottom:0; }
+  </style>
+</head>
+<body>
+  <div id="mol-topbar">
+    <strong>Mol* workspace</strong>
+    <input id="mol-id" placeholder="UniProt ID" autocomplete="off" spellcheck="false" />
+    <button id="mol-load">Načíst</button>
+    <button id="mol-clear">Vyčistit</button>
+    <div id="mol-drop">Přetáhni sem protein</div>
+    <div id="mol-status">Inicializuji Mol*…</div>
+  </div>
+  <div id="loaded-bar"><span style="font-size:12px;color:#667085;">Načtené proteiny:</span></div>
+  <div id="molstar-root"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/molstar@5.11.0/build/viewer/molstar.js"><\/script>
+  <script>
+    let viewer = null;
+    const loaded = [];
+    const input = document.getElementById('mol-id');
+    const status = document.getElementById('mol-status');
+    const loadedBar = document.getElementById('loaded-bar');
+
+    function cleanAccession(value) {
+      const raw = String(value || '').trim().toUpperCase();
+      const match = raw.match(/(?:SP\\||TR\\|)?([A-Z0-9][A-Z0-9_-]{4,24})(?:\\||$)/);
+      return match ? match[1] : raw.split(/\\s+/)[0];
+    }
+
+    function parsePayload(raw) {
+      if (!raw) return null;
+      try {
+        const x = JSON.parse(raw);
+        if (x && typeof x === 'object') return x;
+      } catch (_) {}
+      return { accession: cleanAccession(raw) };
+    }
+
+    function setStatus(message, error) {
+      status.textContent = message;
+      status.style.color = error ? '#a00000' : '#556070';
+    }
+
+    function structureLabel(item, suffix) {
+      const bits = [item?.accession, item?.proteinName, item?.organism].filter(Boolean);
+      let label = bits.join(' — ');
+      if (item?.tagSummary) label += ' — ' + item.tagSummary;
+      if (suffix) label += ' · ' + suffix;
+      return label || String(item?.accession || 'protein');
+    }
+
+    function structureRoots() {
+      return viewer?.plugin?.managers?.structure?.hierarchy?.current?.structures || [];
+    }
+
+    async function translateStructure(structureRef, x) {
+      if (!x || !structureRef?.cell) return;
+      const LA = molstar.lib.math.LinearAlgebra;
+      const matrix = LA.Mat4.identity();
+      LA.Mat4.setTranslation(matrix, LA.Vec3.create(x, 0, 0));
+      const T = molstar.lib.plugin.StateTransforms;
+      const update = viewer.plugin.state.data.build().to(structureRef.cell)
+        .insert(T.Model.TransformStructureConformation, {
+          transform: { name: 'matrix', params: { data: matrix, transpose: false } }
+        });
+      await viewer.plugin.runTask(viewer.plugin.state.data.updateTree(update));
+    }
+
+    function focusLoaded(index) {
+      const item = loaded[index];
+      const structure = item?.structureRef?.cell?.obj?.data;
+      if (!structure) return;
+      const loci = molstar.lib.structure.Structure.toStructureElementLoci(structure);
+      viewer.plugin.managers.camera.focusLoci(loci);
+      setStatus('Vybráno: ' + item.accession + (item.organism ? ' — ' + item.organism : ''));
+    }
+
+    function renderLoadedBar() {
+      const prefix = '<span style="font-size:12px;color:#667085;">Načtené proteiny:</span>';
+      loadedBar.innerHTML = prefix + loaded.map((item, i) => {
+        const shortTag = item.tagSummary ? ' · ' + item.tagSummary : '';
+        const label = (i + 1) + '. ' + item.accession + (item.organism ? ' · ' + item.organism : '') + shortTag;
+        return '<button class="loaded-chip" data-loaded-index="' + i + '" title="' + label.replace(/&/g,'&amp;').replace(/"/g,'&quot;') + '">' + label + '</button>';
+      }).join('');
+      loadedBar.querySelectorAll('[data-loaded-index]').forEach(btn => {
+        btn.addEventListener('click', () => focusLoaded(Number(btn.dataset.loadedIndex)));
+      });
+    }
+
+    async function init() {
+      try {
+        viewer = await molstar.Viewer.create('molstar-root', {
+          layoutIsExpanded: false,
+          layoutShowControls: true,
+          layoutShowRemoteState: false,
+          layoutShowSequence: true,
+          layoutShowLog: true,
+          layoutShowLeftPanel: true,
+          viewportShowExpand: true,
+          viewportShowSelectionMode: true,
+          viewportShowAnimation: true,
+          pdbProvider: 'pdbe',
+          emdbProvider: 'pdbe'
+        });
+        setStatus('Připraveno. Všechny struktury sdílejí jeden Mol* a jedno menu.');
+      } catch (e) {
+        console.error(e);
+        setStatus('Mol* se nepodařilo inicializovat: ' + e.message, true);
+      }
+    }
+
+    async function loadProtein(payload) {
+      const parsed = typeof payload === 'string' ? parsePayload(payload) : payload;
+      const accession = cleanAccession(parsed?.accession || parsed?.protein_id || '');
+      if (!accession || !viewer) return;
+      input.value = accession;
+
+      try {
+        setStatus('Hledám AlphaFold model pro ' + accession + '…');
+        const response = await fetch('https://alphafold.ebi.ac.uk/api/prediction/' + encodeURIComponent(accession), { headers:{Accept:'application/json'} });
+        if (!response.ok) throw new Error('AlphaFold API HTTP ' + response.status);
+        const data = await response.json();
+        if (!Array.isArray(data) || !data.length) throw new Error('AlphaFold DB nevrátil model.');
+        const entry = data[0];
+        const cifUrl = entry.cifUrl || entry.cif_url || entry.modelCifUrl || entry.model_cif_url;
+        if (!cifUrl) throw new Error('API nevrátilo mmCIF URL.');
+
+        const before = structureRoots().length;
+        await viewer.loadStructureFromUrl(cifUrl, 'mmcif', false, { label: structureLabel(parsed, '') });
+        const roots = structureRoots();
+        const structureRef = roots[roots.length - 1];
+        if (!structureRef || roots.length <= before) throw new Error('Mol* nevytvořil strukturu.');
+
+        // Nové modely automaticky rozkládáme vedle sebe, ale zůstávají v jednom Mol* projektu.
+        const spacing = 85;
+        await translateStructure(structureRef, loaded.length * spacing);
+
+        loaded.push({
+          accession: accession,
+          proteinName: parsed?.proteinName || parsed?.protein_name || entry.uniprotDescription || accession,
+          organism: parsed?.organism || entry.organismScientificName || '',
+          tagSummary: parsed?.tagSummary || parsed?.shortLabel || '',
+          structureRef: structureRef
+        });
+        renderLoadedBar();
+        focusLoaded(loaded.length - 1);
+      } catch (e) {
+        console.error(e);
+        setStatus('Nelze načíst ' + accession + ': ' + e.message, true);
+      }
+    }
+
+    document.getElementById('mol-load').addEventListener('click', () => loadProtein({ accession: input.value }));
+    input.addEventListener('keydown', e => { if (e.key === 'Enter') loadProtein({ accession: input.value }); });
+    document.getElementById('mol-clear').addEventListener('click', async () => {
+      if (viewer?.plugin) await viewer.plugin.clear();
+      loaded.splice(0, loaded.length);
+      renderLoadedBar();
+      setStatus('Workspace vyčištěn.');
+    });
+
+    window.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('drag-over'); if (e.dataTransfer) e.dataTransfer.dropEffect='copy'; });
+    window.addEventListener('dragleave', e => { if (e.relatedTarget === null) document.body.classList.remove('drag-over'); });
+    window.addEventListener('drop', e => {
+      e.preventDefault();
+      document.body.classList.remove('drag-over');
+      const raw = e.dataTransfer.getData('application/x-lucka-hit') || e.dataTransfer.getData('application/x-uniprot') || e.dataTransfer.getData('text/plain');
+      loadProtein(raw);
+    });
+
+    init();
+  <\/script>
+</body>
+</html>`;
+  }
+
+  function compareMolHtml(a, b) {
+    const payload = JSON.stringify([a, b]).replaceAll('<', '\u003c');
+    return `<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Compare — Mol* — Lucka Structures</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/molstar@5.11.0/build/viewer/molstar.css" />
+  <style>
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f7f9}
+    #compare-head{height:154px;box-sizing:border-box;padding:8px 12px;border-bottom:1px solid #ccd5df;background:#fbfcfe;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start}
+    #compare-title{font-size:13px;line-height:1.35;overflow:hidden}
+    #compare-status{font-size:12px;color:#52606d;margin-top:3px}
+    #compare-stats{font-size:12px;color:#344054;margin-top:4px;font-weight:600}
+    #pair-details{display:grid;grid-template-columns:repeat(2,minmax(260px,1fr));gap:8px;margin-top:8px}
+    .pair-card{display:flex;gap:8px;align-items:flex-start;padding:7px 8px;border:1px solid #d7dee6;border-radius:8px;background:#fff}
+    .pair-swatch{width:12px;height:12px;border-radius:2px;display:inline-block;flex:0 0 auto;margin-top:2px}
+    .pair-meta{font-size:11px;color:#475467;line-height:1.35;margin-top:2px}
+    #legend{display:flex;align-items:center;gap:6px;font-size:11px;color:#475467;white-space:nowrap;padding-top:2px}
+    .grad{width:170px;height:10px;border-radius:5px;background:linear-gradient(90deg,#0b3d1e,#176b36,#3f9b5f,#82c991,#d8f0dc);border:1px solid #aaa}
+    #molstar-root{position:absolute;left:0;right:0;top:154px;bottom:0}
+  </style>
+</head>
+<body>
+  <div id="compare-head">
+    <div id="compare-title"><strong>TM-align Compare:</strong> <span id="labels"></span><div id="compare-status">Inicializuji Mol*…</div><div id="compare-stats"></div><div id="pair-details"></div></div>
+    <div id="legend"><span>0 Å</span><span class="grad"></span><span>≥8 Å</span><span>· reference = černá</span></div>
+  </div>
+  <div id="molstar-root"></div>
+  <script src="https://cdn.jsdelivr.net/npm/molstar@5.11.0/build/viewer/molstar.js"><\/script>
+  <script>
+    const pair = ${payload};
+    const status = document.getElementById('compare-status');
+    const stats = document.getElementById('compare-stats');
+    const pairDetails = document.getElementById('pair-details');
+    document.getElementById('labels').textContent = pair.map(function(x){ return x.accession + (x.organism ? ' (' + x.organism + ')' : ''); }).join('  vs  ');
+    let viewer = null;
+
+    function formatMetric(value, digits, suffix) {
+      if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return '—';
+      return Number(value).toFixed(digits) + (suffix || '');
+    }
+
+    function structureLabel(item, suffix) {
+      const bits = [item.accession, item.proteinName, item.organism].filter(Boolean);
+      let label = bits.join(' — ');
+      if (item.tagSummary) label += ' — ' + item.tagSummary;
+      if (suffix) label += ' · ' + suffix;
+      return label;
+    }
+
+    function renderPairCards() {
+      pairDetails.innerHTML = pair.map(function(item, index) {
+        const color = index === 0 ? '#111111' : '#2e8b57';
+        const role = index === 0 ? 'reference' : 'target';
+        const tag = item.tagSummary || item.shortLabel || '—';
+        return '<div class="pair-card">'
+          + '<span class="pair-swatch" style="background:' + color + '"></span>'
+          + '<div>'
+          + '<div><strong>' + (item.accession || 'protein') + '</strong>' + (item.proteinName ? ' — ' + item.proteinName : '') + '</div>'
+          + '<div class="pair-meta">' + (item.organism || '—') + ' · ' + role + '</div>'
+          + '<div class="pair-meta">TM ' + formatMetric(item.tm, 2, '') + ' · aligned ' + formatMetric(item.aligned, 1, ' %') + ' · seq. id ' + formatMetric(item.identity, 1, ' %') + '</div>'
+          + '<div class="pair-meta">Štítek: ' + tag + '</div>'
+          + '</div></div>';
+      }).join('');
+    }
+
+    renderPairCards();
+
+    function setStatus(msg, error) { status.textContent = msg; status.style.color = error ? '#a00000' : '#52606d'; }
+
+    async function afEntry(accession) {
+      const r = await fetch('https://alphafold.ebi.ac.uk/api/prediction/' + encodeURIComponent(accession), {headers:{Accept:'application/json'}});
+      if (!r.ok) throw new Error('AlphaFold API ' + accession + ': HTTP ' + r.status);
+      const data = await r.json();
+      if (!Array.isArray(data) || !data.length) throw new Error('AlphaFold DB nevrátil model pro ' + accession);
+      return data[0];
+    }
+
+    function roots() { return viewer.plugin.managers.structure.hierarchy.current.structures || []; }
+
+    function extractAtomsAndCaLoci(structure) {
+      const P = molstar.lib.structure.StructureProperties;
+      const Location = molstar.lib.structure.StructureElement.Location;
+      const StructureElement = molstar.lib.structure.StructureElement;
+      const loc = Location.create(structure);
+      const atoms = [];
+      const ca = [];
+      const lociElements = [];
+
+      for (const unit of structure.units) {
+        loc.unit = unit;
+        const indices = [];
+        if (!unit.elements || !unit.conformation) continue;
+
+        for (let i = 0; i < unit.elements.length; i++) {
+          const e = unit.elements[i];
+          loc.element = e;
+          let atomName, comp, chain, seq, elem;
+          try {
+            atomName = P.atom.label_atom_id(loc);
+            comp = P.atom.label_comp_id(loc);
+            chain = P.chain.auth_asym_id(loc) || P.chain.label_asym_id(loc) || 'A';
+            seq = P.residue.auth_seq_id(loc) || P.residue.label_seq_id(loc);
+            elem = P.atom.type_symbol(loc) || String(atomName || '').replace(/[^A-Za-z]/g,'').slice(0,2);
+          } catch (_) { continue; }
+
+          const atom = {
+            atomName:String(atomName||'X'), comp:String(comp||'UNK'), chain:String(chain||'A'), seq:Number(seq)||1,
+            elem:String(elem||'C'), x:unit.conformation.x(e), y:unit.conformation.y(e), z:unit.conformation.z(e)
+          };
+          atoms.push(atom);
+
+          if (atom.atomName.trim() === 'CA') {
+            indices.push(i);
+            ca.push(atom);
+          }
+        }
+
+        if (indices.length) {
+          lociElements.push({ unit: unit, indices: Int32Array.from(indices) });
+        }
+      }
+
+      return {
+        atoms: atoms,
+        ca: ca,
+        loci: StructureElement.Loci(structure, lociElements)
+      };
+    }
+
+    function transformPoint(p, matrix) {
+      const V = molstar.lib.math.LinearAlgebra.Vec3;
+      const v = V.create(p.x, p.y, p.z);
+      V.transformMat4(v, v, matrix);
+      return { x:v[0], y:v[1], z:v[2] };
+    }
+
+    function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);}
+
+    function pdbAtomLine(serial, atom, xyz, b) {
+      const an=atom.atomName.trim().slice(0,4).padStart(4,' ');
+      const res=atom.comp.slice(0,3).padStart(3,' ');
+      const chain=(atom.chain||'A').slice(0,1);
+      const seq=String(atom.seq).slice(-4).padStart(4,' ');
+      const xs=xyz.x.toFixed(3).padStart(8,' '), ys=xyz.y.toFixed(3).padStart(8,' '), zs=xyz.z.toFixed(3).padStart(8,' ');
+      const bf=Math.max(0,Math.min(99.99,Number(b)||0)).toFixed(2).padStart(6,' ');
+      const elem=(atom.elem||'C').trim().slice(0,2).padStart(2,' ');
+      return 'ATOM  '+String(serial).slice(-5).padStart(5,' ')+' '+an+' '+res+' '+chain+seq+'    '+xs+ys+zs+'  1.00'+bf+'          '+elem;
+    }
+
+    function makePdb(extracted, matrix, deviationMap, isReference) {
+      const lines=[]; let serial=1;
+      for(const atom of extracted.atoms){
+        const xyz=isReference ? atom : transformPoint(atom,matrix);
+        const key=atom.chain+'|'+atom.seq;
+        const b=isReference ? 0 : (deviationMap.has(key) ? deviationMap.get(key) : 9.5);
+        lines.push(pdbAtomLine(serial++,atom,xyz,b));
+      }
+      lines.push('TER'); lines.push('END'); return lines.join('\\n');
+    }
+
+    async function loadTmAlignModule() {
+      try {
+        return await import('https://esm.sh/molstar@5.11.0/lib/mol-model/structure/structure/util/tm-align.js');
+      } catch (e) {
+        throw new Error('Nepodařilo se načíst TM-align modul Mol*: ' + e.message);
+      }
+    }
+
+    async function compare() {
+      try {
+        viewer=await molstar.Viewer.create('molstar-root',{
+          layoutIsExpanded:false,layoutShowControls:true,layoutShowRemoteState:false,layoutShowSequence:true,
+          layoutShowLog:true,layoutShowLeftPanel:true,viewportShowExpand:true,viewportShowSelectionMode:true,viewportShowAnimation:true
+        });
+
+        setStatus('Načítám oba AlphaFold modely…');
+        const entries=await Promise.all(pair.map(function(x){ return afEntry(x.accession); }));
+        for(let i=0;i<2;i++){
+          const e=entries[i];
+          const url=e.cifUrl||e.cif_url||e.modelCifUrl||e.model_cif_url;
+          await viewer.loadStructureFromUrl(url,'mmcif',false,{label:structureLabel(pair[i],'')});
+        }
+
+        const r=roots();
+        if(r.length<2) throw new Error('Mol* nenačetl oba modely.');
+        const refExtract=extractAtomsAndCaLoci(r[r.length-2].cell.obj.data);
+        const mobExtract=extractAtomsAndCaLoci(r[r.length-1].cell.obj.data);
+        if(refExtract.ca.length<3 || mobExtract.ca.length<3) throw new Error('Nedostatek Cα atomů pro TM-align.');
+
+        setStatus('Počítám TM-align…');
+        const tmMod = await loadTmAlignModule();
+        if (!tmMod || typeof tmMod.tmAlign !== 'function') throw new Error('Mol* TM-align modul neobsahuje tmAlign().');
+
+        const result = tmMod.tmAlign(refExtract.loci, mobExtract.loci);
+        if (!result || !result.alignedLength) throw new Error('TM-align nenašel použitelnou superpozici.');
+
+        const dev=new Map();
+        for(let i=0;i<result.alignmentA.length;i++){
+          const ia=result.alignmentA[i], ib=result.alignmentB[i];
+          const ra=refExtract.ca[ia], rb=mobExtract.ca[ib];
+          if(!ra || !rb) continue;
+          const d=dist(ra, transformPoint(rb,result.bTransform));
+          dev.set(rb.chain+'|'+rb.seq,d);
+        }
+
+        const refPdb=makePdb(refExtract,null,new Map(),true);
+        const mobPdb=makePdb(mobExtract,result.bTransform,dev,false);
+        await viewer.plugin.clear();
+
+        await viewer.loadStructureFromData(refPdb,'pdb',{dataLabel:structureLabel(pair[0],'reference')});
+        let rr=roots();
+        const refRoot=rr[rr.length-1];
+        await viewer.plugin.managers.structure.component.updateRepresentationsTheme(refRoot.components,{color:'uniform',colorParams:{value:0x111111}});
+
+        await viewer.loadStructureFromData(mobPdb,'pdb',{dataLabel:structureLabel(pair[1],'TM-align target')});
+        rr=roots();
+        const mobRoot=rr[rr.length-1];
+        await viewer.plugin.managers.structure.component.updateRepresentationsTheme(mobRoot.components,{color:'uncertainty',colorParams:{domain:[0,8],list:{kind:'interpolate',colors:[0xd8f0dc,0x82c991,0x3f9b5f,0x176b36,0x0b3d1e]}}});
+
+        stats.textContent = 'TM-score ref ' + result.tmScoreA.toFixed(3)
+          + ' · TM-score target ' + result.tmScoreB.toFixed(3)
+          + ' · RMSD ' + result.rmsd.toFixed(2) + ' Å'
+          + ' · aligned ' + result.alignedLength + ' residues';
+        setStatus('TM-align hotový. Reference je černá; druhý model jde od tmavě zelené při malé odchylce po světle zelenou při velké odchylce.');
+      } catch(e){
+        console.error(e);
+        setStatus('Compare se nepodařilo: '+e.message,true);
+      }
+    }
+    compare();
+  <\/script>
+</body>
+</html>`;
+  }
+
+  function openMolWorkspace() {
+    const win = window.open('', 'lucka_molstar_workspace', 'popup=yes,width=1450,height=920,resizable=yes,scrollbars=no');
+    if (!win) { alert('Prohlížeč zablokoval vyskakovací okno. Povol popupy pro tento viewer.'); return null; }
+    molWorkspaceWindow = win;
+    if (win.document && win.document.title === 'Mol* workspace — Lucka Structures') { win.focus(); return win; }
+    win.document.open(); win.document.write(molWorkspaceHtml()); win.document.close(); win.focus(); return win;
+  }
+
+  function openCompareWindow() {
+    const items = effectiveCompareItems();
+    if (items.length !== 2) return;
+    const win = window.open('', 'lucka_compare_molstar', 'popup=yes,width=1450,height=920,resizable=yes,scrollbars=no');
+    if (!win) { alert('Prohlížeč zablokoval Compare okno. Povol popupy pro tento viewer.'); return; }
+    compareWindow = win;
+    win.document.open();
+    win.document.write(compareMolHtml(items[0], items[1]));
+    win.document.close();
+    win.focus();
+  }
+
+  const molWorkspaceButton = document.getElementById('mol-workspace-btn');
+  if (molWorkspaceButton) molWorkspaceButton.addEventListener('click', openMolWorkspace);
+  if (compareButton) compareButton.addEventListener('click', openCompareWindow);
+  if (compareClearButton) compareClearButton.addEventListener('click', () => { compareSelection = []; updateCompareUI(); });
+  if (compareQueryCheckbox) compareQueryCheckbox.addEventListener('change', () => {
+    includeQueryInCompare = Boolean(compareQueryCheckbox.checked);
+    if (includeQueryInCompare && compareSelection.length > 1) compareSelection = compareSelection.slice(-1);
+    updateCompareUI();
+    if (selectedTaxid !== null && nodeIndex.has(selectedTaxid)) showInfo(nodeIndex.get(selectedTaxid));
+  });
+
+  // Delegované eventy fungují i po přerenderování pravého panelu.
+  document.addEventListener('dragstart', event => {
+    const target = event.target.closest?.('.protein-id-draggable');
+    if (!target || !event.dataTransfer) return;
+    const accession = target.dataset.proteinId || target.textContent.trim();
+    if (!accession) return;
+    const payload = { accession, proteinName:target.dataset.proteinName||'', organism:target.dataset.organism||'', tm:finiteNumber(target.dataset.tm), aligned:finiteNumber(target.dataset.aligned), identity:finiteNumber(target.dataset.identity), shortLabel:target.dataset.shortLabel||'', tagSummary:target.dataset.tagSummary||'', source:'hit' };
+    event.dataTransfer.effectAllowed='copy';
+    event.dataTransfer.setData('application/x-lucka-hit',JSON.stringify(payload));
+    event.dataTransfer.setData('application/x-uniprot',accession);
+    event.dataTransfer.setData('text/plain',accession);
+  });
+
+  document.addEventListener('change', event => {
+    const box = event.target.closest?.('.compare-hit-checkbox');
+    if (!box) return;
+    toggleCompareItem({ accession:box.dataset.proteinId, proteinName:box.dataset.proteinName||'', organism:box.dataset.organism||'', tm:finiteNumber(box.dataset.tm), aligned:finiteNumber(box.dataset.aligned), identity:finiteNumber(box.dataset.identity), shortLabel:box.dataset.shortLabel||'', tagSummary:box.dataset.tagSummary||'', source:'hit' }, box.checked);
+  });
+
+  /*
+    Projektová logika:
+    - technické ID: project1, project2, ...
+    - lidský název: data/processed/projectN/project.json -> "name"
+    - strom: data/processed/projectN/alphafind_tree.json
+    - PANTHER evidence (volitelně):
+      data/processed/projectN/panther/panther_evidence.json
+
+    Viewer při běhu přes `python3 -m http.server` zjistí dostupné
+    projectN složky z výpisu data/processed/.
+    Jako fallback používá data/current_project.txt.
+  */
+
+  const PROCESSED_ROOT_URL = "../data/processed/";
+  const PROJECT_INDEX_URL = "../data/processed/projects.json";
+  const CURRENT_PROJECT_URL = "../data/current_project.txt";
+
+  let currentProjectId = null;
+  let currentProjectMeta = null;
+  let currentDataUrl = null;
+  let currentPantherUrl = null;
+  let currentPantherEvidence = null;
+  let currentPfamUrl = null;
+  let currentPfamEvidence = null;
+  let currentFamilyUrl = null;
+  let currentFamilyEvidence = null;
+
+  const svg = d3.select("#tree");
+  const errorEl = document.getElementById("error");
+  const statusEl = document.getElementById("status");
+  const breadcrumbEl = document.getElementById("breadcrumb");
+  const backButton = document.getElementById("back-btn");
+  const collapseButton = document.getElementById("collapse-btn");
+  const projectSelect = document.getElementById("project-select");
+  const viewFilterSelect = document.getElementById("view-filter");
+  const labelModeSelect = document.getElementById("label-mode");
+  const scoreFilterEnabledInput = document.getElementById("score-filter-enabled");
+  const scoreFilterMetricSelect = document.getElementById("score-filter-metric");
+  const scoreFilterThresholdInput = document.getElementById("score-filter-threshold");
+  const colorMetricSelect = document.getElementById("color-metric");
+  const scoreLegendTitle = document.getElementById("score-legend-title");
+  const scoreLegendLabels = document.getElementById("score-legend-labels");
+  const treeWrap = document.getElementById("tree-wrap");
+  const sidePanel = document.getElementById("side");
+  const infoEl = document.getElementById("info");
+
+  const organismSearchInput = document.getElementById("organism-search");
+  const organismSearchList = document.getElementById("organism-search-list");
+  const organismSearchButton = document.getElementById("organism-search-btn");
+  const organismSearchClearButton = document.getElementById("organism-search-clear-btn");
+
+  const annotationModeInput = document.getElementById("annotation-mode");
+  const annotationActiveSelect = document.getElementById("annotation-active");
+  const annotationNameInput = document.getElementById("annotation-name");
+  const annotationColorInput = document.getElementById("annotation-color");
+  const annotationSaveButton = document.getElementById("annotation-save-btn");
+  const annotationDeleteButton = document.getElementById("annotation-delete-btn");
+  const annotationFilterSelect = document.getElementById("annotation-filter");
+  const proteinTreeFilterSelect = document.getElementById("protein-tree-filter");
+  const filterSummaryEl = document.getElementById("filter-summary");
+
+
+  let originalData = null;
+  let mode = "explore";
+  let currentTaxid = null;
+  let selectedTaxid = null;
+  let viewFilter = "hits";
+  let labelMode = "latin";
+  let scoreFilterEnabled = false;
+  let scoreFilterMetric = "tm";
+  let scoreFilterThreshold = 0.70;
+  let colorMetric = "tm";
+
+  let searchedTaxid = null;
+  const searchRevealTaxids = new Set();
+
+  let annotationMode = false;
+  let activeAnnotationId = "";
+  let annotationFilterId = "";
+  let proteinTreeFilterId = "";
+  let proteinAnnotationFilterId = "";
+  let annotationStore = { labels: {}, assignments: {}, protein_assignments: {}, protein_notes: {}, label_notes: {} };
+  const subtreeAnnotationLabels = new Map();
+  const subtreeProteinAnnotationLabels = new Map();
+
+  let taxonNotes = {};
+
+
+
+  const expandedTaxids = new Set();
+  const nodeIndex = new Map();
+  const parentIndex = new Map();
+
+  const directFilteredHitCount = new Map();
+  const subtreeFilteredHitCount = new Map();
+  const subtreeBestScore = new Map();
+
+  const pantherByTaxid = new Map();
+  const subtreeHasPanther = new Map();
+  const subtreeHasQuerySubfamily = new Map();
+  const subtreeHasAlphaOnly = new Map();
+
+  const pfamByTaxid = new Map();
+  const subtreeHasPfam = new Map();
+  const subtreeHasAlphaOutsidePfam = new Map();
+
+  const familyByTaxid = new Map();
+  const subtreeHasFamily = new Map();
+  const subtreeHasAlphaOutsideFamily = new Map();
+
+  let pantherMatchedTaxa = 0;
+  let pantherUnmatchedTaxa = 0;
+  let pfamMatchedTaxa = 0;
+  let pfamUnmatchedTaxa = 0;
+  let familyMatchedTaxa = 0;
+  let familyUnmatchedTaxa = 0;
+
+  const METRIC_CONFIG = {
+    tm: {
+      label: "TM-score",
+      min: 0,
+      max: 1,
+      step: 0.01,
+      defaultThreshold: 0.70,
+      colorDomain: [0.50, 0.65, 0.80, 1.00],
+      legend: ["0.50", "0.60", "0.70", "0.80", "0.90", "1.00"]
+    },
+    aligned: {
+      label: "Aligned residues",
+      min: 0,
+      max: 100,
+      step: 1,
+      defaultThreshold: 50,
+      colorDomain: [0, 35, 70, 100],
+      legend: ["0 %", "20 %", "40 %", "60 %", "80 %", "100 %"]
+    },
+    identity: {
+      label: "Sequence identity",
+      min: 0,
+      max: 100,
+      step: 1,
+      defaultThreshold: 30,
+      colorDomain: [0, 35, 70, 100],
+      legend: ["0 %", "20 %", "40 %", "60 %", "80 %", "100 %"]
+    }
+  };
+
+  const SCORE_COLORS = [
+    "#f4df4e",
+    "#f5a43a",
+    "#e4572e",
+    "#b71c1c"
+  ];
+
+  function finiteNumber(value) {
+    if (value === null || value === undefined || value === "") return null;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function percentValue(value) {
+    const number = finiteNumber(value);
+    if (number === null) return null;
+
+    // AlphaFind API občas používá podíl 0–1, export/viewer procenta 0–100.
+    // Tímto podporujeme obě reprezentace.
+    if (number >= 0 && number <= 1) return number * 100;
+    return number;
+  }
+
+  function firstMetricValue(hit, keys, percent = false) {
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(hit || {}, key)) continue;
+      const value = percent ? percentValue(hit[key]) : finiteNumber(hit[key]);
+      if (value !== null) return value;
+    }
+    return null;
+  }
+
+  function hitMetricValue(hit, metric) {
+    if (metric === "tm") {
+      return firstMetricValue(hit, [
+        "tm_score",
+        "tm_score_query",
+        "tmScore"
+      ]);
+    }
+
+    if (metric === "aligned") {
+      return firstMetricValue(hit, [
+        "aligned_percent",
+        "aligned_percentage",
+        "aligned_residues",
+        "aligned"
+      ], true);
+    }
+
+    if (metric === "identity") {
+      return firstMetricValue(hit, [
+        "sequence_identity",
+        "sequential_identity",
+        "identity_percent",
+        "sequence_identity_percent",
+        "seq_identity",
+        "identity"
+      ], true);
+    }
+
+    return null;
+  }
+
+  function directHits(data) {
+    return Array.isArray(data?.hits) ? data.hits : [];
+  }
+
+  function hitPassesScoreFilter(hit) {
+    if (!scoreFilterEnabled) return true;
+
+    const value = hitMetricValue(hit, scoreFilterMetric);
+    return value !== null && value >= scoreFilterThreshold;
+  }
+
+  function filteredHitsForNode(data) {
+    return directHits(data).filter(hitPassesScoreFilter);
+  }
+
+  function computeFilteredAlphaState(node) {
+    const ownHits = filteredHitsForNode(node);
+    let subtreeCount = ownHits.length;
+
+    let best = null;
+    for (const hit of ownHits) {
+      const value = hitMetricValue(hit, colorMetric);
+      if (value !== null && (best === null || value > best)) best = value;
+    }
+
+    for (const child of node.children || []) {
+      const childResult = computeFilteredAlphaState(child);
+      subtreeCount += childResult.count;
+      if (
+        childResult.best !== null &&
+        (best === null || childResult.best > best)
+      ) {
+        best = childResult.best;
+      }
+    }
+
+    directFilteredHitCount.set(node.taxid, ownHits.length);
+    subtreeFilteredHitCount.set(node.taxid, subtreeCount);
+    subtreeBestScore.set(node.taxid, best);
+
+    return { count: subtreeCount, best };
+  }
+
+  function bestScoreForNode(data) {
+    if (!data) return null;
+    const value = subtreeBestScore.get(data.taxid);
+    return value === null || value === undefined ? null : Number(value);
+  }
+
+  function scoreColor(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) {
+      return "#aaa";
+    }
+
+    const config = METRIC_CONFIG[colorMetric] || METRIC_CONFIG.tm;
+    return d3.scaleLinear()
+      .domain(config.colorDomain)
+      .range(SCORE_COLORS)
+      .clamp(true)(Number(value));
+  }
+
+  function updateScoreLegend() {
+    const config = METRIC_CONFIG[colorMetric] || METRIC_CONFIG.tm;
+
+    if (scoreLegendTitle) {
+      scoreLegendTitle.textContent =
+        `Barva vnějšího kolečka = nejlepší ${config.label} v celé větvi pod tímto taxonem`;
+    }
+
+    if (scoreLegendLabels) {
+      scoreLegendLabels.innerHTML =
+        config.legend.map(label => `<span>${label}</span>`).join("");
+    }
+  }
+
+  function updateFilterInputForMetric(resetValue = false) {
+    const config = METRIC_CONFIG[scoreFilterMetric] || METRIC_CONFIG.tm;
+    scoreFilterThresholdInput.min = config.min;
+    scoreFilterThresholdInput.max = config.max;
+    scoreFilterThresholdInput.step = config.step;
+
+    if (resetValue) {
+      scoreFilterThreshold = config.defaultThreshold;
+      scoreFilterThresholdInput.value = String(config.defaultThreshold);
+    }
+  }
+
+  function applyScoreSettings() {
+    scoreFilterEnabled = Boolean(scoreFilterEnabledInput.checked);
+    scoreFilterMetric = scoreFilterMetricSelect.value;
+    colorMetric = colorMetricSelect.value;
+
+    const threshold = finiteNumber(scoreFilterThresholdInput.value);
+    scoreFilterThreshold = threshold === null
+      ? METRIC_CONFIG[scoreFilterMetric].defaultThreshold
+      : threshold;
+
+    updateScoreLegend();
+
+    if (originalData) {
+      computeFilteredAlphaState(originalData);
+      computeSubtreeAlphaOnly(originalData);
+      computeSubtreeAlphaOutsidePfam(originalData);
+
+      if (selectedTaxid !== null && nodeIndex.has(selectedTaxid)) {
+        showInfo(nodeIndex.get(selectedTaxid));
+      }
+
+      render();
+    }
+  }
+
+  function indexTree(node, parentTaxid = null) {
+    nodeIndex.set(node.taxid, node);
+
+    if (parentTaxid !== null) {
+      parentIndex.set(node.taxid, parentTaxid);
+    }
+
+    for (const child of node.children || []) {
+      indexTree(child, node.taxid);
+    }
+  }
+
+
+  // ============================================================
+  // HLEDÁNÍ ORGANISMŮ + UŽIVATELSKÉ ŠTÍTKY
+  // ============================================================
+
+  function normalizeSearchText(value) {
+    return String(value ?? "")
+      .trim()
+      .toLocaleLowerCase("cs");
+  }
+
+  function refreshOrganismSearchList() {
+    if (!organismSearchList) return;
+    const rows = [];
+
+    for (const node of nodeIndex.values()) {
+      const latin = String(node?.name || "").trim();
+      const czech = String(node?.name_cs || "").trim();
+
+      if (latin) rows.push(`<option value="${escapeHtml(latin)}"></option>`);
+      if (czech && normalizeSearchText(czech) !== normalizeSearchText(latin)) {
+        rows.push(`<option value="${escapeHtml(czech)}"></option>`);
+      }
+    }
+
+    organismSearchList.innerHTML = rows.join("");
+  }
+
+  function findOrganism(query) {
+    const q = normalizeSearchText(query);
+    if (!q) return null;
+
+    const candidates = [...nodeIndex.values()].map(node => ({
+      node,
+      latin: normalizeSearchText(node?.name),
+      czech: normalizeSearchText(node?.name_cs)
+    }));
+
+    return (
+      candidates.find(x => x.latin === q || x.czech === q)
+      || candidates.find(x => x.latin.startsWith(q) || x.czech.startsWith(q))
+      || candidates.find(x => x.latin.includes(q) || x.czech.includes(q))
+      || null
+    )?.node || null;
+  }
+
+  function revealOrganism(node) {
+    if (!node) return;
+
+    searchedTaxid = node.taxid;
+    searchRevealTaxids.clear();
+
+    const path = getTaxonPath(node.taxid);
+    for (const item of path) {
+      searchRevealTaxids.add(item.taxid);
+      expandedTaxids.add(item.taxid);
+    }
+
+    mode = "explore";
+    currentTaxid = null;
+    selectedTaxid = node.taxid;
+
+    render();
+    showInfo(node);
+    resetScrollToTopLeft();
+
+    requestAnimationFrame(() => {
+      const target = document.querySelector(`[data-taxid="${CSS.escape(String(node.taxid))}"]`);
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      }
+    });
+  }
+
+  function runOrganismSearch() {
+    const node = findOrganism(organismSearchInput?.value);
+    if (!node) {
+      statusEl.textContent = `Organismus „${organismSearchInput?.value || ""}“ nebyl ve stromu nalezen.`;
+      return;
+    }
+    revealOrganism(node);
+  }
+
+
+  // ============================================================
+  // POZNÁMKY K TAXONŮM
+  // ============================================================
+
+  function notesStorageKey() {
+    return `luckaStructures.notes.${currentProjectId || "unknown"}`;
+  }
+
+  function loadTaxonNotes() {
+    taxonNotes = {};
+
+    try {
+      const raw = localStorage.getItem(notesStorageKey());
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          taxonNotes = parsed;
+        }
+      }
+    } catch (error) {
+      console.warn("Nepodařilo se načíst poznámky k taxonům:", error);
+    }
+  }
+
+  function saveTaxonNotes() {
+    try {
+      localStorage.setItem(notesStorageKey(), JSON.stringify(taxonNotes));
+    } catch (error) {
+      console.warn("Nepodařilo se uložit poznámky k taxonům:", error);
+    }
+  }
+
+  function taxonNoteFor(data) {
+    return String(taxonNotes?.[String(data?.taxid)] || "");
+  }
+
+  function taxonNotesSection(data) {
+    const value = taxonNoteFor(data);
+
+    return `
+      <div class="info-row">
+        <div class="info-label">Moje poznámka k organismu</div>
+
+        <textarea
+          id="taxon-note-textarea"
+          class="taxon-note-box"
+          placeholder="Sem si můžeš napsat cokoli k tomuto organismu…"
+        >${escapeHtml(value)}</textarea>
+
+        <div class="taxon-note-actions">
+          <button
+            type="button"
+            id="taxon-note-save-btn"
+          >Uložit poznámku</button>
+
+          <button
+            type="button"
+            id="taxon-note-clear-btn"
+          >Smazat</button>
+
+          <span
+            id="taxon-note-status"
+            class="taxon-note-status"
+          ></span>
+        </div>
+      </div>
+    `;
+  }
+
+  function wireTaxonNoteControls(data) {
+    const textarea = document.getElementById("taxon-note-textarea");
+    const saveBtn = document.getElementById("taxon-note-save-btn");
+    const clearBtn = document.getElementById("taxon-note-clear-btn");
+    const status = document.getElementById("taxon-note-status");
+
+    if (!textarea || !saveBtn || !clearBtn || !data) return;
+
+    const key = String(data.taxid);
+
+    const save = () => {
+      const value = textarea.value;
+
+      if (value.trim()) {
+        taxonNotes[key] = value;
+      } else {
+        delete taxonNotes[key];
+      }
+
+      saveTaxonNotes();
+
+      if (status) {
+        status.textContent = "Uloženo";
+        setTimeout(() => {
+          if (status) status.textContent = "";
+        }, 1500);
+      }
+    };
+
+    saveBtn.addEventListener("click", save);
+
+    clearBtn.addEventListener("click", () => {
+      textarea.value = "";
+      delete taxonNotes[key];
+      saveTaxonNotes();
+
+      if (status) {
+        status.textContent = "Poznámka smazána";
+        setTimeout(() => {
+          if (status) status.textContent = "";
+        }, 1500);
+      }
+    });
+
+    // Ctrl+Enter / Cmd+Enter = rychlé uložení.
+    textarea.addEventListener("keydown", event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        save();
+      }
+    });
+  }
+
+
+  function annotationStorageKey() {
+    return `luckaStructures.annotations.${currentProjectId || "unknown"}`;
+  }
+
+  function loadAnnotations() {
+    annotationStore = { labels: {}, assignments: {}, protein_assignments: {}, protein_notes: {}, label_notes: {} };
+
+    try {
+      const raw = localStorage.getItem(annotationStorageKey());
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        annotationStore.labels = parsed?.labels && typeof parsed.labels === "object"
+          ? parsed.labels : {};
+        annotationStore.assignments = parsed?.assignments && typeof parsed.assignments === "object"
+          ? parsed.assignments : {};
+        annotationStore.protein_assignments = parsed?.protein_assignments && typeof parsed.protein_assignments === "object"
+          ? parsed.protein_assignments : {};
+        annotationStore.protein_notes = parsed?.protein_notes && typeof parsed.protein_notes === "object"
+          ? parsed.protein_notes : {};
+        annotationStore.label_notes = parsed?.label_notes && typeof parsed.label_notes === "object"
+          ? parsed.label_notes : {};
+      }
+    } catch (error) {
+      console.warn("Nepodařilo se načíst uložené štítky:", error);
+    }
+
+    activeAnnotationId = "";
+    annotationFilterId = "";
+    proteinTreeFilterId = "";
+    refreshAnnotationControls();
+    computeSubtreeAnnotations(originalData);
+    computeSubtreeProteinAnnotations(originalData);
+    updateFilterSummary();
+  }
+
+  function saveAnnotations() {
+    try {
+      localStorage.setItem(annotationStorageKey(), JSON.stringify(annotationStore));
+    } catch (error) {
+      console.warn("Nepodařilo se uložit štítky:", error);
+    }
+  }
+
+  function nextAnnotationId() {
+    return `tag_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  function refreshAnnotationControls() {
+    const labelEntries = Object.entries(annotationStore.labels || {})
+      .sort((a, b) => String(a[1]?.name || "").localeCompare(String(b[1]?.name || ""), "cs"));
+
+    const activeOptions = [
+      '<option value="">— žádný štítek —</option>',
+      ...labelEntries.map(([id, label]) =>
+        `<option value="${escapeHtml(id)}">${escapeHtml(label.name || id)}</option>`
+      )
+    ].join("");
+
+    annotationActiveSelect.innerHTML = activeOptions;
+    annotationActiveSelect.value = activeAnnotationId;
+
+    const filterOptions = [
+      '<option value="">bez filtru</option>',
+      ...labelEntries.map(([id, label]) =>
+        `<option value="${escapeHtml(id)}">${escapeHtml(label.name || id)}</option>`
+      )
+    ].join("");
+
+    annotationFilterSelect.innerHTML = filterOptions;
+    annotationFilterSelect.value = annotationFilterId;
+
+    if (proteinTreeFilterSelect) {
+      proteinTreeFilterSelect.innerHTML = filterOptions;
+      proteinTreeFilterSelect.value = proteinTreeFilterId;
+    }
+
+    const active = annotationStore.labels?.[activeAnnotationId];
+    if (active) {
+      annotationNameInput.value = active.name || "";
+      annotationColorInput.value = active.color || "#2f80ed";
+    }
+
+    document.getElementById("annotation-tools")
+      ?.classList.toggle("annotation-mode-active", annotationMode);
+  }
+
+  function annotationIdsForTaxon(taxid) {
+    const raw = annotationStore.assignments?.[String(taxid)];
+    return Array.isArray(raw) ? raw.filter(id => annotationStore.labels?.[id]) : [];
+  }
+
+  function annotationLabelsForTaxon(taxid) {
+    return annotationIdsForTaxon(taxid)
+      .map(id => ({ id, ...annotationStore.labels[id] }))
+      .filter(Boolean);
+  }
+
+  function proteinEntryKey(hit, data) {
+    const accession = compareKey(hit?.protein_id || hit?.proteinId || hit?.accession || '');
+    if (!accession) return '';
+    return String(data?.taxid ?? hit?.taxid ?? '0') + '::' + accession;
+  }
+
+  function proteinAnnotationIdsForEntry(hit, data) {
+    const key = proteinEntryKey(hit, data);
+    const raw = annotationStore.protein_assignments?.[key];
+    return Array.isArray(raw)
+      ? raw.filter(id => annotationStore.labels?.[id])
+      : [];
+  }
+
+  function proteinAnnotationLabelsForEntry(hit, data) {
+    return proteinAnnotationIdsForEntry(hit, data)
+      .map(id => ({ id, ...annotationStore.labels[id] }))
+      .filter(Boolean);
+  }
+
+  function proteinNoteForEntry(hit, data) {
+    const key = proteinEntryKey(hit, data);
+    const raw = annotationStore.protein_notes?.[key];
+    return {
+      short_label: String(raw?.short_label || ''),
+      note: String(raw?.note || '')
+    };
+  }
+
+  function proteinTagSummary(hit, data) {
+    const note = proteinNoteForEntry(hit, data);
+    const labels = proteinAnnotationLabelsForEntry(hit, data)
+      .map(label => label.name || label.id)
+      .filter(Boolean);
+    const parts = [];
+    if (note.short_label.trim()) parts.push(note.short_label.trim());
+    if (labels.length) parts.push(labels.join(', '));
+    return parts.join(' · ');
+  }
+
+  function proteinPassesAnnotationFilter(hit, data) {
+    if (!proteinAnnotationFilterId) return true;
+    return proteinAnnotationIdsForEntry(hit, data).includes(proteinAnnotationFilterId);
+  }
+
+  function toggleAnnotationForProtein(hit, data) {
+    if (!data) return;
+    if (!activeAnnotationId || !annotationStore.labels?.[activeAnnotationId]) {
+      alert('Nejdřív nahoře vyber nebo vytvoř aktivní štítek.');
+      return;
+    }
+
+    const key = proteinEntryKey(hit, data);
+    if (!key) return;
+
+    const current = new Set(proteinAnnotationIdsForEntry(hit, data));
+    if (current.has(activeAnnotationId)) current.delete(activeAnnotationId);
+    else current.add(activeAnnotationId);
+
+    if (current.size > 0) annotationStore.protein_assignments[key] = [...current];
+    else delete annotationStore.protein_assignments[key];
+
+    saveAnnotations();
+    computeSubtreeProteinAnnotations(originalData);
+    updateFilterSummary();
+    render();
+    if (selectedTaxid !== null && nodeIndex.has(selectedTaxid)) showInfo(nodeIndex.get(selectedTaxid));
+  }
+
+
+  function addAnnotationToProtein(hit, data, annotationId) {
+    if (!data || !annotationId || !annotationStore.labels?.[annotationId]) return;
+
+    const key = proteinEntryKey(hit, data);
+    if (!key) return;
+
+    const current = new Set(proteinAnnotationIdsForEntry(hit, data));
+    current.add(annotationId);
+    annotationStore.protein_assignments[key] = [...current];
+
+    saveAnnotations();
+    computeSubtreeProteinAnnotations(originalData);
+    updateFilterSummary();
+    render();
+    if (selectedTaxid !== null && nodeIndex.has(selectedTaxid)) {
+      showInfo(nodeIndex.get(selectedTaxid));
+    }
+  }
+
+  function removeAnnotationFromProtein(hit, data, annotationId) {
+    if (!data || !annotationId) return;
+
+    const key = proteinEntryKey(hit, data);
+    if (!key) return;
+
+    const current = new Set(proteinAnnotationIdsForEntry(hit, data));
+    current.delete(annotationId);
+
+    if (current.size > 0) annotationStore.protein_assignments[key] = [...current];
+    else delete annotationStore.protein_assignments[key];
+
+    saveAnnotations();
+    computeSubtreeProteinAnnotations(originalData);
+    updateFilterSummary();
+    render();
+    if (selectedTaxid !== null && nodeIndex.has(selectedTaxid)) {
+      showInfo(nodeIndex.get(selectedTaxid));
+    }
+  }
+
+  function saveProteinNote(hit, data, shortLabel, note) {
+    const key = proteinEntryKey(hit, data);
+    if (!key) return;
+
+    const shortText = String(shortLabel || '').trim();
+    const noteText = String(note || '').trim();
+
+    if (shortText || noteText) {
+      annotationStore.protein_notes[key] = {
+        short_label: shortText,
+        note: noteText
+      };
+    } else {
+      delete annotationStore.protein_notes[key];
+    }
+
+    saveAnnotations();
+    if (selectedTaxid !== null && nodeIndex.has(selectedTaxid)) showInfo(nodeIndex.get(selectedTaxid));
+  }
+
+  function hitFromDataset(dataset) {
+    return {
+      protein_id: dataset.proteinId || '',
+      protein_name: dataset.proteinName || '',
+      tm_score: finiteNumber(dataset.tm),
+      aligned_percent: finiteNumber(dataset.aligned),
+      sequence_identity: finiteNumber(dataset.identity)
+    };
+  }
+
+  function computeSubtreeAnnotations(node) {
+    subtreeAnnotationLabels.clear();
+    if (!node) return new Set();
+
+    function walk(current) {
+      const labels = new Set(annotationIdsForTaxon(current.taxid));
+      for (const child of current.children || []) {
+        for (const id of walk(child)) labels.add(id);
+      }
+      subtreeAnnotationLabels.set(current.taxid, labels);
+      return labels;
+    }
+
+    return walk(node);
+  }
+
+  function subtreeHasAnnotation(data, annotationId) {
+    if (!annotationId) return true;
+    return Boolean(subtreeAnnotationLabels.get(data?.taxid)?.has(annotationId));
+  }
+
+  function computeSubtreeProteinAnnotations(node) {
+    subtreeProteinAnnotationLabels.clear();
+    if (!node) return new Set();
+
+    function walk(current) {
+      const labels = new Set();
+
+      for (const hit of directHits(current)) {
+        for (const id of proteinAnnotationIdsForEntry(hit, current)) {
+          labels.add(id);
+        }
+      }
+
+      for (const child of current.children || []) {
+        for (const id of walk(child)) labels.add(id);
+      }
+
+      subtreeProteinAnnotationLabels.set(current.taxid, labels);
+      return labels;
+    }
+
+    return walk(node);
+  }
+
+  function subtreeHasProteinAnnotation(data, annotationId) {
+    if (!annotationId) return true;
+    return Boolean(
+      subtreeProteinAnnotationLabels
+        .get(data?.taxid)
+        ?.has(annotationId)
+    );
+  }
+
+  function labelNote(annotationId) {
+    return String(annotationStore.label_notes?.[annotationId] || "");
+  }
+
+  function saveLabelNote(annotationId, value) {
+    if (!annotationId) return;
+
+    const note = String(value || "").trim();
+
+    if (note) {
+      annotationStore.label_notes[annotationId] = note;
+    } else {
+      delete annotationStore.label_notes[annotationId];
+    }
+
+    saveAnnotations();
+  }
+
+  function labelNoteEditorHtml(annotationId) {
+    if (!annotationId) return "";
+
+    return `
+      <textarea
+        class="filter-label-note"
+        data-label-note-id="${escapeHtml(annotationId)}"
+        placeholder="Moje poznámky k tomuto štítku…"
+      >${escapeHtml(labelNote(annotationId))}</textarea>
+      <div class="filter-label-note-actions">
+        <button
+          type="button"
+          class="filter-label-note-save"
+          data-label-note-id="${escapeHtml(annotationId)}"
+        >Uložit poznámku</button>
+        <span class="filter-label-note-status"></span>
+      </div>
+    `;
+  }
+
+  function wireFilterSummaryNotes() {
+    if (!filterSummaryEl) return;
+
+    filterSummaryEl.querySelectorAll(".filter-label-note-save").forEach(button => {
+      button.addEventListener("click", () => {
+        const annotationId = button.dataset.labelNoteId || "";
+        const section = button.closest(".filter-summary-section");
+        const textarea = section?.querySelector(
+          `.filter-label-note[data-label-note-id="${CSS.escape(annotationId)}"]`
+        );
+        const status = section?.querySelector(".filter-label-note-status");
+
+        saveLabelNote(annotationId, textarea?.value || "");
+
+        if (status) {
+          status.textContent = "Uloženo";
+          setTimeout(() => {
+            if (status) status.textContent = "";
+          }, 1500);
+        }
+      });
+    });
+
+    filterSummaryEl.querySelectorAll(".filter-label-note").forEach(textarea => {
+      textarea.addEventListener("keydown", event => {
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          const annotationId = textarea.dataset.labelNoteId || "";
+          saveLabelNote(annotationId, textarea.value);
+
+          const section = textarea.closest(".filter-summary-section");
+          const status = section?.querySelector(".filter-label-note-status");
+          if (status) {
+            status.textContent = "Uloženo";
+            setTimeout(() => {
+              if (status) status.textContent = "";
+            }, 1500);
+          }
+        }
+      });
+    });
+  }
+
+  function directlyAnnotatedTaxa(annotationId) {
+    if (!annotationId) return [];
+
+    const result = [];
+    for (const node of nodeIndex.values()) {
+      if (annotationIdsForTaxon(node.taxid).includes(annotationId)) {
+        result.push(node);
+      }
+    }
+
+    return result.sort((a, b) =>
+      String(displayName(a)).localeCompare(String(displayName(b)), "cs")
+    );
+  }
+
+  function proteinTaggedTaxa(annotationId) {
+    if (!annotationId) return [];
+
+    const byTaxid = new Map();
+
+    for (const node of nodeIndex.values()) {
+      const matching = directHits(node).filter(hit =>
+        proteinAnnotationIdsForEntry(hit, node).includes(annotationId)
+      );
+
+      if (matching.length > 0) {
+        byTaxid.set(node.taxid, {
+          node,
+          proteins: matching.map(hit => hit.protein_id).filter(Boolean)
+        });
+      }
+    }
+
+    return [...byTaxid.values()].sort((a, b) =>
+      String(displayName(a.node)).localeCompare(String(displayName(b.node)), "cs")
+    );
+  }
+
+  function updateFilterSummary() {
+    if (!filterSummaryEl) return;
+
+    const sections = [];
+
+    if (annotationFilterId) {
+      const label = annotationStore.labels?.[annotationFilterId];
+      const taxa = directlyAnnotatedTaxa(annotationFilterId);
+
+      const shown = taxa.slice(0, 60);
+      const list = shown.length
+        ? `<ul class="filter-summary-list">${
+            shown.map(node =>
+              `<li><strong>${escapeHtml(displayName(node))}</strong>`
+              + `${node.rank ? ` <span class="muted">(${escapeHtml(node.rank)})</span>` : ""}`
+              + `</li>`
+            ).join("")
+          }</ul>`
+        : `<div class="muted">Žádný taxon není tímto štítkem přímo označený.</div>`;
+
+      sections.push(`
+        <div class="filter-summary-section">
+          <div class="filter-summary-title">Taxonový štítek: ${escapeHtml(label?.name || annotationFilterId)}</div>
+          <div>${taxa.length} přímo označených taxonů/organismů.</div>
+          ${list}
+          ${taxa.length > shown.length
+            ? `<div class="muted">… a dalších ${taxa.length - shown.length}</div>`
+            : ""}
+          ${labelNoteEditorHtml(annotationFilterId)}
+        </div>
+      `);
+    }
+
+    if (proteinTreeFilterId) {
+      const label = annotationStore.labels?.[proteinTreeFilterId];
+      const taxa = proteinTaggedTaxa(proteinTreeFilterId);
+      const proteinCount = taxa.reduce((sum, item) => sum + item.proteins.length, 0);
+
+      const shown = taxa.slice(0, 60);
+      const list = shown.length
+        ? `<ul class="filter-summary-list">${
+            shown.map(item =>
+              `<li><strong>${escapeHtml(displayName(item.node))}</strong>`
+              + ` — ${item.proteins.length} protein${item.proteins.length === 1 ? "" : "ů"}`
+              + `${item.proteins.length
+                  ? ` <span class="muted">(${escapeHtml(item.proteins.join(", "))})</span>`
+                  : ""}`
+              + `</li>`
+            ).join("")
+          }</ul>`
+        : `<div class="muted">Žádný protein s tímto štítkem není v aktuálním projektu.</div>`;
+
+      sections.push(`
+        <div class="filter-summary-section">
+          <div class="filter-summary-title">Proteinový štítek: ${escapeHtml(label?.name || proteinTreeFilterId)}</div>
+          <div>${proteinCount} označených proteinů v ${taxa.length} taxonech/organismech.</div>
+          ${list}
+          ${taxa.length > shown.length
+            ? `<div class="muted">… a dalších ${taxa.length - shown.length} taxonů</div>`
+            : ""}
+          ${labelNoteEditorHtml(proteinTreeFilterId)}
+        </div>
+      `);
+    }
+
+    if (sections.length === 0) {
+      filterSummaryEl.style.display = "none";
+      filterSummaryEl.innerHTML = "";
+      return;
+    }
+
+    filterSummaryEl.innerHTML = sections.join("");
+    filterSummaryEl.style.display = "block";
+    wireFilterSummaryNotes();
+  }
+
+  function toggleAnnotationForTaxon(data) {
+    if (!data || !activeAnnotationId || !annotationStore.labels?.[activeAnnotationId]) return;
+
+    const key = String(data.taxid);
+    const current = new Set(annotationIdsForTaxon(data.taxid));
+
+    if (current.has(activeAnnotationId)) {
+      current.delete(activeAnnotationId);
+    } else {
+      current.add(activeAnnotationId);
+    }
+
+    if (current.size > 0) {
+      annotationStore.assignments[key] = [...current];
+    } else {
+      delete annotationStore.assignments[key];
+    }
+
+    saveAnnotations();
+    computeSubtreeAnnotations(originalData);
+    updateFilterSummary();
+    render();
+    showInfo(data);
+  }
+
+  function appendAnnotationMarkers(selection, dataAccessor) {
+    selection.each(function(d) {
+      const data = dataAccessor(d);
+      const labels = annotationLabelsForTaxon(data?.taxid);
+      if (!labels.length) return;
+
+      const g = d3.select(this)
+        .append("g")
+        .attr("class", "annotation-markers")
+        .attr("transform", "translate(-20,-20)");
+
+      labels.slice(0, 6).forEach((label, index) => {
+        const col = index % 3;
+        const row = Math.floor(index / 3);
+
+        g.append("circle")
+          .attr("class", "annotation-marker")
+          .attr("cx", col * 9)
+          .attr("cy", row * 9)
+          .attr("r", 4)
+          .attr("fill", label.color || "#2f80ed");
+      });
+
+      if (labels.length > 6) {
+        g.append("text")
+          .attr("x", 27)
+          .attr("y", 8)
+          .attr("font-size", 8)
+          .attr("fill", "#555")
+          .text(`+${labels.length - 6}`);
+      }
+    });
+  }
+
+  function annotationSection(data) {
+    const labels = annotationLabelsForTaxon(data?.taxid);
+    if (!labels.length) return "";
+
+    const chips = labels.map(label => `
+      <span class="annotation-chip">
+        <span class="annotation-chip-dot" style="background:${escapeHtml(label.color || "#2f80ed")}"></span>
+        ${escapeHtml(label.name || label.id)}
+      </span>
+    `).join("");
+
+    return `
+      <div class="info-row">
+        <div class="info-label">Uživatelské štítky</div>
+        <div class="annotation-summary">${chips}</div>
+      </div>
+    `;
+  }
+
+  function familyEvidenceForNode(data) {
+    if (!data) return null;
+    return familyByTaxid.get(Number(data.taxid)) || null;
+  }
+
+  function hasInterProFamilyDirect(data) {
+    const evidence = familyEvidenceForNode(data);
+    return Boolean(evidence?.family_member);
+  }
+
+  function computeSubtreeFamily(node) {
+    let hasFamily = hasInterProFamilyDirect(node);
+
+    for (const child of node.children || []) {
+      hasFamily = computeSubtreeFamily(child) || hasFamily;
+    }
+
+    subtreeHasFamily.set(node.taxid, hasFamily);
+    return hasFamily;
+  }
+
+  function computeSubtreeAlphaOutsideFamily(node) {
+    let hasAlphaOutsideFamily =
+      Number(directFilteredHitCount.get(node.taxid) || 0) > 0
+      && !hasInterProFamilyDirect(node);
+
+    for (const child of node.children || []) {
+      hasAlphaOutsideFamily =
+        computeSubtreeAlphaOutsideFamily(child) || hasAlphaOutsideFamily;
+    }
+
+    subtreeHasAlphaOutsideFamily.set(node.taxid, hasAlphaOutsideFamily);
+    return hasAlphaOutsideFamily;
+  }
+
+  function familySection(data) {
+    const evidence = familyEvidenceForNode(data);
+    if (!evidence) return "";
+
+    const accessions = Array.isArray(evidence.uniprot_accessions)
+      ? evidence.uniprot_accessions
+      : [];
+
+    const shown = accessions.slice(0, 30);
+    const accessionsHtml = shown.length
+      ? shown.map(escapeHtml).join(", ")
+      : "—";
+    const more = accessions.length > shown.length
+      ? ` … +${accessions.length - shown.length}`
+      : "";
+
+    const interproId =
+      evidence.interpro_id
+      || currentFamilyEvidence?.interpro_id
+      || "InterPro";
+
+    const interproName =
+      evidence.interpro_name
+      || currentFamilyEvidence?.interpro_name
+      || "";
+
+    return `
+      <div class="info-row">
+        <div class="info-label">InterPro family evidence</div>
+        <div class="info-value">
+          <strong>${escapeHtml(interproId)}</strong>
+          ${interproName ? ` — ${escapeHtml(interproName)}` : ""}
+        </div>
+        <div class="score-grid">
+          <div>Family members v taxonu</div>
+          <div><strong>${Number(evidence.family_member_count || 0)}</strong></div>
+        </div>
+        <div class="muted" style="margin-top:8px;font-size:12px;">
+          UniProt: ${accessionsHtml}${more}
+        </div>
+      </div>
+    `;
+  }
+
+  function pantherEvidenceForNode(data) {
+    if (!data) return null;
+    return pantherByTaxid.get(Number(data.taxid)) || null;
+  }
+
+  function pfamEvidenceForNode(data) {
+    if (!data) return null;
+    return pfamByTaxid.get(Number(data.taxid)) || null;
+  }
+
+  function hasPfamFamilyDirect(data) {
+    const evidence = pfamEvidenceForNode(data);
+    return Boolean(evidence?.family_member);
+  }
+
+  function hasDirectAlphaFind(data) {
+    return Boolean(
+      data &&
+      Number(directFilteredHitCount.get(data.taxid) || 0) > 0
+    );
+  }
+
+  function hasPantherFamilyDirect(data) {
+    const evidence = pantherEvidenceForNode(data);
+    return Boolean(evidence?.family_member);
+  }
+
+  function hasQuerySubfamilyDirect(data) {
+    const evidence = pantherEvidenceForNode(data);
+    return Boolean(evidence?.same_query_subfamily);
+  }
+
+  function evidenceClassForNode(data) {
+    const alpha = hasDirectAlphaFind(data);
+    const pantherFamily = hasPantherFamilyDirect(data);
+    const querySubfamily = hasQuerySubfamilyDirect(data);
+
+    if (alpha && pantherFamily) return "both";
+    if (querySubfamily) return "panther-subfamily";
+    if (pantherFamily) return "panther-family";
+    return null;
+  }
+
+  function computeSubtreePanther(node) {
+    let hasPanther = hasPantherFamilyDirect(node);
+    let hasQuerySubfamily = hasQuerySubfamilyDirect(node);
+
+    for (const child of node.children || []) {
+      const childResult = computeSubtreePanther(child);
+      hasPanther = hasPanther || childResult.hasPanther;
+      hasQuerySubfamily =
+        hasQuerySubfamily || childResult.hasQuerySubfamily;
+    }
+
+    subtreeHasPanther.set(node.taxid, hasPanther);
+    subtreeHasQuerySubfamily.set(node.taxid, hasQuerySubfamily);
+
+    return { hasPanther, hasQuerySubfamily };
+  }
+
+  function computeSubtreePfam(node) {
+    let hasPfam = hasPfamFamilyDirect(node);
+
+    for (const child of node.children || []) {
+      hasPfam = computeSubtreePfam(child) || hasPfam;
+    }
+
+    subtreeHasPfam.set(node.taxid, hasPfam);
+    return hasPfam;
+  }
+
+  function computeSubtreeAlphaOutsidePfam(node) {
+    let hasAlphaOutsidePfam =
+      Number(directFilteredHitCount.get(node.taxid) || 0) > 0
+      && !hasPfamFamilyDirect(node);
+
+    for (const child of node.children || []) {
+      hasAlphaOutsidePfam =
+        computeSubtreeAlphaOutsidePfam(child) || hasAlphaOutsidePfam;
+    }
+
+    subtreeHasAlphaOutsidePfam.set(node.taxid, hasAlphaOutsidePfam);
+    return hasAlphaOutsidePfam;
+  }
+
+  function computeSubtreeAlphaOnly(node) {
+    // Přímý AlphaFind-only taxon = po aktuálním score filtru má alespoň
+    // jeden AlphaFind hit, ale nemá přímou PANTHER family evidence.
+    let hasAlphaOnly =
+      Number(directFilteredHitCount.get(node.taxid) || 0) > 0
+      && !hasPantherFamilyDirect(node);
+
+    for (const child of node.children || []) {
+      hasAlphaOnly =
+        computeSubtreeAlphaOnly(child) || hasAlphaOnly;
+    }
+
+    subtreeHasAlphaOnly.set(node.taxid, hasAlphaOnly);
+    return hasAlphaOnly;
+  }
+
+  function nodeHasAnyEvidence(data) {
+    return Boolean(
+      nodeHasHit(data) ||
+      subtreeHasPanther.get(data.taxid) ||
+      subtreeHasPfam.get(data.taxid) ||
+      subtreeHasFamily.get(data.taxid)
+    );
+  }
+
+  function pfamSection(data) {
+    const evidence = pfamEvidenceForNode(data);
+    if (!evidence) return "";
+
+    const accessions = Array.isArray(evidence.uniprot_accessions)
+      ? evidence.uniprot_accessions
+      : [];
+
+    const shown = accessions.slice(0, 30);
+    const accessionsHtml = shown.length
+      ? shown.map(escapeHtml).join(", ")
+      : "—";
+    const more = accessions.length > shown.length
+      ? ` … +${accessions.length - shown.length}`
+      : "";
+
+    return `
+      <div class="info-row">
+        <div class="info-label">Pfam evidence</div>
+        <div class="info-value">
+          <strong>${escapeHtml(evidence.pfam_id || currentPfamEvidence?.pfam_id || "Pfam")}</strong>
+          ${evidence.pfam_name ? ` — ${escapeHtml(evidence.pfam_name)}` : ""}
+        </div>
+        <div class="score-grid">
+          <div>Pfam members v taxonu</div>
+          <div><strong>${Number(evidence.family_member_count || 0)}</strong></div>
+        </div>
+        <div class="muted" style="margin-top:8px;font-size:12px;">
+          UniProt: ${accessionsHtml}${more}
+        </div>
+      </div>
+    `;
+  }
+
+  function pantherSection(data) {
+    const evidence = pantherEvidenceForNode(data);
+    if (!evidence) return "";
+
+    const accessions =
+      Array.isArray(evidence.uniprot_accessions)
+        ? evidence.uniprot_accessions
+        : [];
+
+    const shown = accessions.slice(0, 10);
+    const accessionsHtml =
+      shown.length
+        ? shown.map(escapeHtml).join(", ")
+        : "—";
+
+    const more =
+      accessions.length > shown.length
+        ? ` … +${accessions.length - shown.length}`
+        : "";
+
+    const subfamilies =
+      Array.isArray(evidence.subfamily_ids)
+        ? evidence.subfamily_ids
+        : [];
+
+    const relation =
+      evidence.same_query_subfamily
+        ? "stejná subfamily jako query"
+        : "člen stejné PANTHER family";
+
+    return `
+      <div class="info-row">
+        <div class="info-label">PANTHER evidence</div>
+        <div class="info-value">
+          <strong>${escapeHtml(relation)}</strong>
+        </div>
+
+        <div class="score-grid">
+          <div>Family members v taxonu</div>
+          <div><strong>${Number(evidence.family_member_count || 0)}</strong></div>
+
+          <div>Query-subfamily members</div>
+          <div><strong>${Number(evidence.query_subfamily_member_count || 0)}</strong></div>
+
+          <div>Subfamilies</div>
+          <div>${escapeHtml(subfamilies.join(", ") || "—")}</div>
+        </div>
+
+        <div class="muted" style="margin-top:8px;font-size:12px;">
+          UniProt: ${accessionsHtml}${more}
+        </div>
+      </div>
+    `;
+  }
+
+  function nodeFill(data) {
+    return scoreColor(bestScoreForNode(data));
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function formatNumber(value, digits = 3) {
+    if (
+      value === null ||
+      value === undefined ||
+      Number.isNaN(Number(value))
+    ) {
+      return "—";
+    }
+
+    return Number(value)
+      .toFixed(digits)
+      .replace(/\.?0+$/, "");
+  }
+
+  function displayName(data) {
+    const latin =
+      data?.name || `Tax ID ${data?.taxid ?? "?"}`;
+
+    const czech =
+      data?.name_cs ? String(data.name_cs).trim() : "";
+
+    if (
+      labelMode === "cs-latin" &&
+      czech &&
+      czech.toLocaleLowerCase("cs") !== latin.toLocaleLowerCase("cs")
+    ) {
+      return `${czech} (${latin})`;
+    }
+
+    if (labelMode === "cs-latin" && czech) {
+      return czech;
+    }
+
+    return latin;
+  }
+
+  function nodeClass(data) {
+    return data.node_type || "context";
+  }
+
+  function nodeHasHit(data) {
+    return Boolean(
+      data &&
+      Number(subtreeFilteredHitCount.get(data.taxid) || 0) > 0
+    );
+  }
+
+
+  function mergeSearchVisible(children, filteredChildren) {
+    if (searchRevealTaxids.size === 0) return filteredChildren;
+    const forced = children.filter(child => searchRevealTaxids.has(child.taxid));
+    return [...new Map([...filteredChildren, ...forced].map(x => [x.taxid, x])).values()];
+  }
+
+  function visibleChildren(data) {
+    const children = data.children || [];
+
+    // Vyhledanou cestu vždy ponecháme viditelnou, i když by ji
+    // aktuální evidence/štítkový filtr jinak skryl.
+    const searchChildren = children.filter(child =>
+      searchRevealTaxids.has(child.taxid)
+    );
+
+    if (annotationFilterId || proteinTreeFilterId) {
+      const annotated = children.filter(child =>
+        subtreeHasAnnotation(child, annotationFilterId)
+        && subtreeHasProteinAnnotation(child, proteinTreeFilterId)
+      );
+      return [...new Map([...annotated, ...searchChildren].map(x => [x.taxid, x])).values()];
+    }
+
+    if (viewFilter === "context") {
+      return children;
+    }
+
+    if (viewFilter === "panther") {
+      // Zobraz jen větve, ve kterých je alespoň jeden přímý člen
+      // zvolené PANTHER family. Nadřazené taxony zůstávají jako cesta.
+      return mergeSearchVisible(children, children.filter(child =>
+        Boolean(subtreeHasPanther.get(child.taxid))
+      ));
+    }
+
+    if (viewFilter === "pfam") {
+      return mergeSearchVisible(children, children.filter(child =>
+        Boolean(subtreeHasPfam.get(child.taxid))
+      ));
+    }
+
+    if (viewFilter === "family") {
+      return mergeSearchVisible(children, children.filter(child =>
+        Boolean(subtreeHasFamily.get(child.taxid))
+      ));
+    }
+
+    if (viewFilter === "alpha-only") {
+      // Zobraz jen větve vedoucí k taxonům, které mají AlphaFind hit
+      // po aktuálním score filtru, ale nemají přímou PANTHER family evidence.
+      return mergeSearchVisible(children, children.filter(child =>
+        Boolean(subtreeHasAlphaOnly.get(child.taxid))
+      ));
+    }
+
+    if (viewFilter === "alpha-outside-pfam") {
+      return mergeSearchVisible(children, children.filter(child =>
+        Boolean(subtreeHasAlphaOutsidePfam.get(child.taxid))
+      ));
+    }
+
+    if (viewFilter === "alpha-outside-family") {
+      return mergeSearchVisible(children, children.filter(child =>
+        Boolean(subtreeHasAlphaOutsideFamily.get(child.taxid))
+      ));
+    }
+
+    return mergeSearchVisible(children, children.filter(nodeHasAnyEvidence));
+  }
+
+  function promoteThroughUnaryNoRank(node) {
+    let current = node;
+    const visited = new Set();
+
+    while (
+      current &&
+      current.rank === "no rank" &&
+      !(Number(directFilteredHitCount.get(current.taxid) || 0) > 0) &&
+      !visited.has(current.taxid)
+    ) {
+      visited.add(current.taxid);
+
+      const children = visibleChildren(current);
+
+      if (children.length !== 1) {
+        break;
+      }
+
+      current = children[0];
+    }
+
+    return current;
+  }
+
+  function overviewChildren(data) {
+    const result = [];
+    const seen = new Set();
+
+    for (const child of visibleChildren(data)) {
+      const promoted = promoteThroughUnaryNoRank(child);
+
+      if (promoted && !seen.has(promoted.taxid)) {
+        seen.add(promoted.taxid);
+        result.push(promoted);
+      }
+    }
+
+    return result;
+  }
+
+  function hasExpandableChildren(data) {
+    return overviewChildren(data).length > 0;
+  }
+
+  function nodeRadius(data) {
+    if (data.node_type === "hit") {
+      return 9;
+    }
+
+    if (hasExpandableChildren(data)) {
+      return 8;
+    }
+
+    return 6;
+  }
+
+  function subtreeScoreSection(data) {
+    const best = bestScoreForNode(data);
+
+    if (best === null || Number.isNaN(best)) return "";
+
+    const config = METRIC_CONFIG[colorMetric] || METRIC_CONFIG.tm;
+    const digits = colorMetric === "tm" ? 3 : 1;
+    const unit = colorMetric === "tm" ? "" : " %";
+
+    return `
+      <div class="info-row">
+        <div class="info-label">Nejlepší ${escapeHtml(config.label)} ve větvi</div>
+        <div class="info-value">
+          <strong>${formatNumber(best, digits)}${unit}</strong>
+        </div>
+      </div>
+    `;
+  }
+
+  function scoreSection(data) {
+    const hits = directHits(data);
+    if (hits.length === 0) return "";
+
+    const bestOf = metric => {
+      let best = null;
+      for (const hit of hits) {
+        const value = hitMetricValue(hit, metric);
+        if (value !== null && (best === null || value > best)) best = value;
+      }
+      return best;
+    };
+
+    const tmBest = bestOf("tm");
+    const alignedBest = bestOf("aligned");
+    const identityBest = bestOf("identity");
+    const passed = filteredHitsForNode(data).length;
+
+    return `
+      <div class="info-row">
+        <div class="info-label">Kvalita AlphaFind hitů</div>
+
+        <div class="score-grid">
+          <div>TM-score max</div>
+          <div><strong>${formatNumber(tmBest)}</strong></div>
+
+          <div>Aligned residues max</div>
+          <div><strong>${formatNumber(alignedBest, 1)} %</strong></div>
+
+          <div>Sequence identity max</div>
+          <div><strong>${formatNumber(identityBest, 1)} %</strong></div>
+
+          <div>Hity po filtru</div>
+          <div><strong>${passed}/${hits.length}</strong></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function hitsSection(data) {
+    const allHits = directHits(data);
+    const hits = filteredHitsForNode(data);
+
+    if (allHits.length === 0) return "";
+
+    const labelEntries = Object.entries(annotationStore.labels || {})
+      .sort((a, b) => String(a[1]?.name || '').localeCompare(String(b[1]?.name || ''), 'cs'));
+
+    const proteinFilterOptions = [
+      '<option value="">bez filtru</option>',
+      ...labelEntries.map(([id, label]) =>
+        `<option value="${escapeHtml(id)}" ${id === proteinAnnotationFilterId ? 'selected' : ''}>${escapeHtml(label.name || id)}</option>`
+      )
+    ].join('');
+
+    if (hits.length === 0) {
+      return `
+        <div class="info-row">
+          <div class="info-label">Jednotlivé hity</div>
+          <div class="protein-filter-row">
+            <label for="protein-annotation-filter">Filtrovat proteinovým štítkem:</label>
+            <select id="protein-annotation-filter">${proteinFilterOptions}</select>
+          </div>
+          <p class="muted">Žádný AlphaFind hit v tomto taxonu nesplňuje aktuální score filtr.</p>
+        </div>
+      `;
+    }
+
+    const sortedHits = [...hits].sort((a, b) => {
+      const bv = hitMetricValue(b, colorMetric);
+      const av = hitMetricValue(a, colorMetric);
+      return (bv ?? -Infinity) - (av ?? -Infinity);
+    });
+
+    const shown = sortedHits.filter(hit => proteinPassesAnnotationFilter(hit, data));
+
+    const items = shown.map(hit => {
+      const tm = hitMetricValue(hit, 'tm');
+      const aligned = hitMetricValue(hit, 'aligned');
+      const identity = hitMetricValue(hit, 'identity');
+      const accession = hit.protein_id || '';
+      const note = proteinNoteForEntry(hit, data);
+      const labels = proteinAnnotationLabelsForEntry(hit, data);
+      const tagSummary = proteinTagSummary(hit, data);
+      const chips = labels.length
+        ? `<div class="annotation-summary protein-chips">${labels.map(label => `
+            <span class="annotation-chip">
+              <span class="annotation-chip-dot" style="background:${escapeHtml(label.color || '#2f80ed')}"></span>
+              ${escapeHtml(label.name || label.id)}
+              <button
+                type="button"
+                class="protein-chip-remove"
+                data-label-id="${escapeHtml(label.id)}"
+                data-protein-id="${escapeHtml(accession)}"
+                data-protein-name="${escapeHtml(hit.protein_name || '')}"
+                data-tm="${tm ?? ''}"
+                data-aligned="${aligned ?? ''}"
+                data-identity="${identity ?? ''}"
+                title="Odebrat tento štítek"
+              >×</button>
+            </span>`).join('')}</div>`
+        : '<div class="muted" style="font-size:11px;margin-top:5px;">Zatím bez proteinového štítku.</div>';
+
+      const proteinTagOptions = [
+        '<option value="">— vyber štítek —</option>',
+        ...labelEntries.map(([id, label]) =>
+          `<option value="${escapeHtml(id)}">${escapeHtml(label.name || id)}</option>`
+        )
+      ].join('');
+      const uniprotUrl = accession
+        ? `https://www.uniprot.org/uniprotkb/${encodeURIComponent(accession)}`
+        : '#';
+
+      return `
+      <li class="protein-hit">
+        <div>
+          <strong
+            class="protein-id-draggable"
+            draggable="true"
+            data-protein-id="${escapeHtml(accession)}"
+            data-protein-name="${escapeHtml(hit.protein_name || '')}"
+            data-organism="${escapeHtml(data.name || '')}"
+            data-tm="${tm ?? ''}"
+            data-aligned="${aligned ?? ''}"
+            data-identity="${identity ?? ''}"
+            data-short-label="${escapeHtml(note.short_label || '')}"
+            data-tag-summary="${escapeHtml(tagSummary)}"
+            title="Přetáhni do Mol* workspace"
+          >${escapeHtml(accession || 'bez ID')}</strong>
+          <label class="compare-hit-label" title="Vybrat tento protein pro Compare">
+            <input
+              type="checkbox"
+              class="compare-hit-checkbox"
+              data-protein-id="${escapeHtml(accession)}"
+              data-protein-name="${escapeHtml(hit.protein_name || '')}"
+              data-organism="${escapeHtml(data.name || '')}"
+              data-tm="${tm ?? ''}"
+              data-aligned="${aligned ?? ''}"
+              data-identity="${identity ?? ''}"
+              data-short-label="${escapeHtml(note.short_label || '')}"
+              data-tag-summary="${escapeHtml(tagSummary)}"
+              ${isCompareSelected(accession) ? 'checked' : ''}
+            /> compare
+          </label>
+        </div>
+        <div class="protein-meta">
+          TM ${formatNumber(tm)}, aligned ${formatNumber(aligned, 1)} %, sequence identity ${formatNumber(identity, 1)} %
+          ${hit.protein_name ? `<br><span class="muted">${escapeHtml(hit.protein_name)}</span>` : ''}
+          ${tagSummary ? `<br><span class="muted"><strong>Poznámka / štítky:</strong> ${escapeHtml(tagSummary)}</span>` : ''}
+        </div>
+        <div class="protein-tools-row">
+          <input
+            type="text"
+            class="protein-short-label-input"
+            data-protein-id="${escapeHtml(accession)}"
+            data-protein-name="${escapeHtml(hit.protein_name || '')}"
+            data-tm="${tm ?? ''}"
+            data-aligned="${aligned ?? ''}"
+            data-identity="${identity ?? ''}"
+            placeholder="Poznámka"
+            value="${escapeHtml(note.short_label || '')}"
+          />
+          <a class="protein-link-btn" href="${uniprotUrl}" target="_blank" rel="noopener noreferrer">UniProt ↗</a>
+        </div>
+
+        <div class="protein-tag-picker">
+          <span class="protein-tag-picker-label">Proteinové štítky:</span>
+          <select
+            class="protein-tag-select"
+            data-protein-id="${escapeHtml(accession)}"
+            data-protein-name="${escapeHtml(hit.protein_name || '')}"
+            data-tm="${tm ?? ''}"
+            data-aligned="${aligned ?? ''}"
+            data-identity="${identity ?? ''}"
+          >${proteinTagOptions}</select>
+          <button
+            type="button"
+            class="protein-tag-add-btn"
+            data-protein-id="${escapeHtml(accession)}"
+            data-protein-name="${escapeHtml(hit.protein_name || '')}"
+            data-tm="${tm ?? ''}"
+            data-aligned="${aligned ?? ''}"
+            data-identity="${identity ?? ''}"
+            ${labelEntries.length ? '' : 'disabled'}
+            title="${labelEntries.length ? 'Přidat vybraný štítek k tomuto proteinu' : 'Nejdřív nahoře vytvoř alespoň jeden štítek'}"
+          >+ Přidat</button>
+        </div>
+
+        ${chips}
+        <details class="protein-note-details">
+          <summary>Delší poznámka${note.note.trim() ? ' · uloženo' : ''}</summary>
+          <textarea
+            class="protein-long-note-textarea"
+            data-protein-id="${escapeHtml(accession)}"
+            data-protein-name="${escapeHtml(hit.protein_name || '')}"
+            data-tm="${tm ?? ''}"
+            data-aligned="${aligned ?? ''}"
+            data-identity="${identity ?? ''}"
+            placeholder="Sem si můžeš psát delší poznámky k tomuto konkrétnímu proteinu…"
+          >${escapeHtml(note.note || '')}</textarea>
+          <div class="protein-actions">
+            <button type="button" class="protein-note-save-btn" data-protein-id="${escapeHtml(accession)}" data-protein-name="${escapeHtml(hit.protein_name || '')}" data-tm="${tm ?? ''}" data-aligned="${aligned ?? ''}" data-identity="${identity ?? ''}">Uložit poznámku</button>
+            <button type="button" class="protein-note-clear-btn" data-protein-id="${escapeHtml(accession)}" data-protein-name="${escapeHtml(hit.protein_name || '')}" data-tm="${tm ?? ''}" data-aligned="${aligned ?? ''}" data-identity="${identity ?? ''}">Smazat</button>
+            <span class="protein-note-status"></span>
+          </div>
+        </details>
+      </li>
+      `;
+    }).join('');
+
+    const filterNote = scoreFilterEnabled
+      ? `<p class="muted" style="font-size:12px;">Filtr: ${escapeHtml(METRIC_CONFIG[scoreFilterMetric].label)} ≥ ${formatNumber(scoreFilterThreshold, scoreFilterMetric === 'tm' ? 2 : 1)}${scoreFilterMetric === 'tm' ? '' : ' %'} · zobrazeno ${hits.length}/${allHits.length}</p>`
+      : '';
+
+    const proteinTagFilterNote = proteinAnnotationFilterId && shown.length === 0
+      ? `<p class="muted" style="font-size:12px;">Po proteinovém štítku se v tomto taxonu nic nenašlo.</p>`
+      : '';
+
+    return `
+      <div class="info-row">
+        <div class="info-label">Jednotlivé hity</div>
+        <div class="protein-filter-row">
+          <label for="protein-annotation-filter">Filtrovat proteinovým štítkem:</label>
+          <select id="protein-annotation-filter">${proteinFilterOptions}</select>
+        </div>
+        ${filterNote}
+        ${proteinTagFilterNote}
+        <ol class="hits-list">${items}</ol>
+        <div class="mol-hint">🧬 UniProt ID můžeš přetáhnout do otevřeného Mol* workspace. Proteinový štítek vybereš přímo u konkrétního proteinu; stejné uložené štítky můžeš používat i u taxonů.</div>
+      </div>
+    `;
+  }
+
+  function wireProteinControls(data) {
+    const filterSelect = document.getElementById('protein-annotation-filter');
+    if (filterSelect) {
+      filterSelect.addEventListener('change', () => {
+        proteinAnnotationFilterId = filterSelect.value || '';
+        showInfo(data);
+      });
+    }
+
+    document.querySelectorAll('.protein-tag-add-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = btn.closest('.protein-hit');
+        const select = row?.querySelector('.protein-tag-select');
+        const annotationId = select?.value || '';
+        if (!annotationId) return;
+
+        addAnnotationToProtein(
+          hitFromDataset(btn.dataset),
+          data,
+          annotationId
+        );
+      });
+    });
+
+    document.querySelectorAll('.protein-chip-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        removeAnnotationFromProtein(
+          hitFromDataset(btn.dataset),
+          data,
+          btn.dataset.labelId || ''
+        );
+      });
+    });
+
+    document.querySelectorAll('.protein-short-label-input').forEach(input => {
+      input.addEventListener('change', () => {
+        const row = input.closest('.protein-hit');
+        const longTextarea = row?.querySelector('.protein-long-note-textarea');
+
+        saveProteinNote(
+          hitFromDataset(input.dataset),
+          data,
+          input.value,
+          longTextarea ? longTextarea.value : ''
+        );
+      });
+    });
+
+    document.querySelectorAll('.protein-note-save-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = btn.closest('.protein-hit');
+        if (!row) return;
+        const shortInput = row.querySelector('.protein-short-label-input');
+        const longTextarea = row.querySelector('.protein-long-note-textarea');
+        const status = row.querySelector('.protein-note-status');
+        saveProteinNote(
+          hitFromDataset(btn.dataset),
+          data,
+          shortInput ? shortInput.value : '',
+          longTextarea ? longTextarea.value : ''
+        );
+        if (status) {
+          status.textContent = 'Uloženo';
+          setTimeout(() => {
+            if (status) status.textContent = '';
+          }, 1500);
+        }
+      });
+    });
+
+    document.querySelectorAll('.protein-note-clear-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = btn.closest('.protein-hit');
+        if (!row) return;
+        const shortInput = row.querySelector('.protein-short-label-input');
+        const longTextarea = row.querySelector('.protein-long-note-textarea');
+        const status = row.querySelector('.protein-note-status');
+        if (shortInput) shortInput.value = '';
+        if (longTextarea) longTextarea.value = '';
+        saveProteinNote(hitFromDataset(btn.dataset), data, '', '');
+        if (status) {
+          status.textContent = 'Smazáno';
+          setTimeout(() => {
+            if (status) status.textContent = '';
+          }, 1500);
+        }
+      });
+    });
+  }
+
+  function showInfo(
+    data,
+    anchorClientY = null
+  ) {
+    selectedTaxid = data.taxid;
+
+    /*
+      Detail se nemusí zobrazovat vždy úplně nahoře.
+
+      Pokud víme, kde uživatel klikl, posuneme začátek
+      informačního bloku přibližně do stejné výšky
+      v pravém panelu. Strom samotný se nijak neposouvá.
+
+      Je to stabilnější než odhadovat pozici podle počtu
+      rozbalených taxonů, protože funguje i po ručním
+      scrollování/panování stromu.
+    */
+    if (
+      sidePanel
+      && infoEl
+      && anchorClientY !== null
+    ) {
+      const sideRect =
+        sidePanel.getBoundingClientRect();
+
+      const desiredOffset =
+        anchorClientY
+        - sideRect.top
+        - 35;
+
+      const maxOffset =
+        Math.max(
+          0,
+          Math.min(
+            360,
+            sideRect.height * 0.55
+          )
+        );
+
+      const offset =
+        Math.max(
+          0,
+          Math.min(
+            desiredOffset,
+            maxOffset
+          )
+        );
+
+      sidePanel.scrollTop = 0;
+      infoEl.style.marginTop =
+        `${offset}px`;
+    }
+
+    else if (
+      infoEl
+      && anchorClientY === null
+    ) {
+      /*
+        Při otevření detailu tlačítkem apod. necháme
+        informační blok nahoře.
+      */
+      infoEl.style.marginTop =
+        "0px";
+    }
+
+    const czech =
+      data.name_cs ? escapeHtml(data.name_cs) : "—";
+
+    const canDrill = visibleChildren(data).length > 0;
+
+    document.getElementById("info").innerHTML = `
+      <div class="info-row">
+        <div class="info-label">Název</div>
+        <div class="info-value"><strong>${escapeHtml(displayName(data))}</strong></div>
+      </div>
+
+      <div class="info-row">
+        <div class="info-label">Scientific name</div>
+        <div class="info-value">${escapeHtml(data.name)}</div>
+      </div>
+
+      <div class="info-row">
+        <div class="info-label">Český název</div>
+        <div class="info-value">${czech}</div>
+      </div>
+
+      <div class="info-row">
+        <div class="info-label">Rank</div>
+        <div class="info-value">${escapeHtml(data.rank)}</div>
+      </div>
+
+      <div class="info-row">
+        <div class="info-label">NCBI Tax ID</div>
+        <div class="info-value">${data.taxid}</div>
+      </div>
+
+      <div class="info-row">
+        <div class="info-label">Direct AlphaFind hits</div>
+        <div class="info-value">${Number(directFilteredHitCount.get(data.taxid) || 0)} / ${Number(data.direct_hit_count || directHits(data).length || 0)}</div>
+      </div>
+
+      <div class="info-row">
+        <div class="info-label">Hits in subtree</div>
+        <div class="info-value">${Number(subtreeFilteredHitCount.get(data.taxid) || 0)}</div>
+      </div>
+
+      ${subtreeScoreSection(data)}
+      ${scoreSection(data)}
+      ${hitsSection(data)}
+      ${annotationSection(data)}
+      ${pantherSection(data)}
+      ${pfamSection(data)}
+      ${familySection(data)}
+      ${taxonNotesSection(data)}
+
+      ${
+        canDrill
+          ? `
+            <button
+              id="open-drill-btn"
+              class="side-action"
+              type="button"
+            >
+              Otevřít detailní drill-down
+            </button>
+          `
+          : ""
+      }
+    `;
+
+    
+    wireTaxonNoteControls(data);
+    wireProteinControls(data);
+
+    const drillButton =
+      document.getElementById("open-drill-btn");
+
+    if (drillButton) {
+      drillButton.addEventListener("click", () => {
+        currentTaxid = data.taxid;
+        mode = "drill";
+        render();
+        resetScrollToTopLeft();
+      });
+    }
+  }
+
+  function getTaxonPath(taxid) {
+    const path = [];
+    let current = taxid;
+
+    while (current !== undefined && current !== null) {
+      const node = nodeIndex.get(current);
+      if (!node) break;
+
+      path.unshift(node);
+      current = parentIndex.get(current);
+    }
+
+    return path;
+  }
+
+  function updateBreadcrumb() {
+    breadcrumbEl.innerHTML = "";
+
+    if (mode === "explore") {
+      breadcrumbEl.textContent = "Celkový rozbalovací přehled";
+      backButton.disabled = true;
+      return;
+    }
+
+    backButton.disabled = !parentIndex.has(currentTaxid);
+
+    const path = getTaxonPath(currentTaxid);
+
+    path.forEach((node, index) => {
+      const span = document.createElement("span");
+      span.textContent = displayName(node);
+      span.className = "breadcrumb-item";
+
+      span.addEventListener("click", () => {
+        currentTaxid = node.taxid;
+        mode = "drill";
+        render();
+        resetScrollToTopLeft();
+      });
+
+      breadcrumbEl.appendChild(span);
+
+      if (index < path.length - 1) {
+        breadcrumbEl.append("  ›  ");
+      }
+    });
+  }
+
+  // ============================================================
+  // EXPLORE VIEW — STROM SHORA DOLŮ
+  // ============================================================
+
+  function buildExploreData(data, isRoot = false) {
+    const copy = { ...data };
+    const children = overviewChildren(data);
+
+    // Hlavní "kmen" s jedinou relevantní větví se ukazuje automaticky.
+    const shouldExpand =
+      isRoot ||
+      expandedTaxids.has(data.taxid) ||
+      children.length === 1;
+
+    if (shouldExpand && children.length > 0) {
+      copy.children = children.map(child =>
+        buildExploreData(child, false)
+      );
+    } else {
+      delete copy.children;
+    }
+
+    return copy;
+  }
+
+  function renderExplore() {
+    svg.selectAll("*").remove();
+
+    const exploreData =
+      buildExploreData(originalData, true);
+
+    const hierarchy =
+      d3.hierarchy(exploreData);
+
+    /*
+      nodeSize:
+      první číslo = horizontální mezera mezi sousedními větvemi
+      druhé číslo = vertikální vzdálenost jednotlivých pater
+
+      240 px na šířku dává dost prostoru i delším českým názvům.
+    */
+    const treeLayout =
+      d3.tree()
+        .nodeSize([240, 82]);
+
+    treeLayout(hierarchy);
+
+    const descendants =
+      hierarchy.descendants();
+
+    const minX =
+      d3.min(descendants, d => d.x) ?? 0;
+
+    const maxX =
+      d3.max(descendants, d => d.x) ?? 0;
+
+    const maxY =
+      d3.max(descendants, d => d.y) ?? 0;
+
+    const margin = {
+      top: 55,
+      right: 180,
+      bottom: 140,
+      left: 180
+    };
+
+    const width =
+      Math.max(
+        treeWrap.clientWidth,
+        (maxX - minX) + margin.left + margin.right
+      );
+
+    const height =
+      Math.max(
+        treeWrap.clientHeight,
+        maxY + margin.top + margin.bottom
+      );
+
+    svg
+      .attr("width", width)
+      .attr("height", height)
+      .attr(
+        "viewBox",
+        `0 0 ${width} ${height}`
+      );
+
+    /*
+      x z D3 stromu používáme jako horizontální souřadnici,
+      y jako vertikální hloubku.
+
+      Posun -minX zajistí, že nic neuteče vlevo mimo plátno.
+    */
+    const group =
+      svg.append("g")
+        .attr(
+          "transform",
+          `translate(${margin.left - minX},${margin.top})`
+        );
+
+    const linkGenerator =
+      d3.linkVertical()
+        .x(d => d.x)
+        .y(d => d.y);
+
+    group
+      .append("g")
+      .selectAll("path")
+      .data(hierarchy.links())
+      .join("path")
+      .attr(
+        "class",
+        d =>
+          `link ${nodeClass(d.target.data)}`
+      )
+      .attr(
+        "d",
+        linkGenerator
+      );
+
+    const nodes =
+      group
+        .append("g")
+        .selectAll("g")
+        .data(descendants)
+        .join("g")
+        .attr(
+          "class",
+          d => {
+            const realData =
+              nodeIndex.get(d.data.taxid)
+              || d.data;
+
+            const expandable =
+              hasExpandableChildren(realData)
+                ? " expandable"
+                : "";
+
+            return (
+              `node ${nodeClass(realData)}${expandable}`
+            );
+          }
+        )
+        .attr(
+          "transform",
+          d =>
+            `translate(${d.x},${d.y})`
+        )
+        .attr("data-taxid", d => String(d.data.taxid))
+        .style(
+          "cursor",
+          d => {
+            const realData =
+              nodeIndex.get(d.data.taxid)
+              || d.data;
+
+            return hasExpandableChildren(realData)
+              ? "pointer"
+              : "default";
+          }
+        )
+        .on(
+          "click",
+          (event, d) => {
+            event.stopPropagation();
+
+            const realData =
+              nodeIndex.get(d.data.taxid)
+              || d.data;
+
+            showInfo(
+              realData,
+              event.clientY
+            );
+
+            if (annotationMode && activeAnnotationId) {
+              toggleAnnotationForTaxon(realData);
+              return;
+            }
+
+            if (!hasExpandableChildren(realData)) {
+              return;
+            }
+
+            if (
+              expandedTaxids.has(realData.taxid)
+            ) {
+              expandedTaxids.delete(
+                realData.taxid
+              );
+            } else {
+              expandedTaxids.add(
+                realData.taxid
+              );
+            }
+
+            render();
+          }
+        );
+
+    /*
+      Velká neviditelná klikací oblast.
+    */
+    /*
+      Neviditelná klikací oblast zůstává o něco větší než grafický uzel.
+    */
+    nodes
+      .append("circle")
+      .attr(
+        "class",
+        "node-hitbox"
+      )
+      .attr(
+        "r",
+        23
+      );
+
+    nodes
+      .filter(d => Number(d.data.taxid) === Number(searchedTaxid))
+      .append("circle")
+      .attr("class", "search-highlight")
+      .attr("r", 27);
+
+    appendAnnotationMarkers(nodes, d =>
+      nodeIndex.get(d.data.taxid) || d.data
+    );
+
+    /*
+      PANTHER evidence = obrys kolem TM-score disku.
+      Obrys se kreslí jen tam, kde má taxon přímou PANTHER evidence.
+    */
+    nodes
+      .filter(d => {
+        const realData =
+          nodeIndex.get(d.data.taxid) || d.data;
+        return Boolean(evidenceClassForNode(realData));
+      })
+      .append("circle")
+      .attr(
+        "class",
+        d => {
+          const realData =
+            nodeIndex.get(d.data.taxid) || d.data;
+          return `evidence-ring ${evidenceClassForNode(realData)}`;
+        }
+      )
+      .attr("r", 23);
+
+    nodes
+      .filter(d => {
+        const realData = nodeIndex.get(d.data.taxid) || d.data;
+        return hasPfamFamilyDirect(realData);
+      })
+      .append("rect")
+      .attr("class", "pfam-marker")
+      .attr("x", 15)
+      .attr("y", -22)
+      .attr("width", 12)
+      .attr("height", 12)
+      .attr("rx", 2);
+
+    nodes
+      .filter(d => {
+        const realData = nodeIndex.get(d.data.taxid) || d.data;
+        return hasInterProFamilyDirect(realData);
+      })
+      .append("rect")
+      .attr("class", "interpro-family-marker")
+      .attr("x", -25)
+      .attr("y", 14)
+      .attr("width", 11)
+      .attr("height", 11)
+      .attr("transform", "rotate(45)");
+
+    /*
+      TM-score teď barví VELKÝ VNĚJŠÍ DISK.
+      Takže barevná informace nezapadne v malém středu.
+    */
+    nodes
+      .append("circle")
+      .attr(
+        "class",
+        "score-ring"
+      )
+      .attr(
+        "r",
+        18
+      )
+      .style(
+        "fill",
+        d => {
+          const realData =
+            nodeIndex.get(d.data.taxid)
+            || d.data;
+
+          return nodeFill(realData);
+        }
+      );
+
+    /*
+      Vnitřní disk je vždy tmavý.
+      U rozbalitelných uzlů v něm sedí bílé + / −.
+    */
+    nodes
+      .append("circle")
+      .attr(
+        "class",
+        "visible-circle"
+      )
+      .attr(
+        "r",
+        d => {
+          const realData =
+            nodeIndex.get(d.data.taxid)
+            || d.data;
+
+          return hasExpandableChildren(realData) ? 10 : 8;
+        }
+      );
+
+    nodes
+      .filter(
+        d => {
+          const realData =
+            nodeIndex.get(d.data.taxid)
+            || d.data;
+
+          return hasExpandableChildren(realData);
+        }
+      )
+      .append("text")
+      .attr(
+        "class",
+        "expand-mark"
+      )
+      .attr("x", 0)
+      .attr("y", 1)
+      .text(
+        d => {
+          const realData =
+            nodeIndex.get(d.data.taxid)
+            || d.data;
+
+          const children =
+            overviewChildren(realData);
+
+          const autoExpanded =
+            children.length === 1;
+
+          const manuallyExpanded =
+            expandedTaxids.has(
+              realData.taxid
+            );
+
+          return (
+            autoExpanded || manuallyExpanded
+              ? "−"
+              : "+"
+          );
+        }
+      );
+
+    /*
+      Název zůstává vždy horizontální.
+      Je pod uzlem, takže dlouhé názvy nepřekážejí
+      čarám tolik jako v radiálním stromu.
+    */
+    nodes
+      .append("text")
+      .attr("x", 0)
+      .attr("y", 24)
+      .attr(
+        "text-anchor",
+        "middle"
+      )
+      .text(
+        d => {
+          const realData =
+            nodeIndex.get(d.data.taxid)
+            || d.data;
+
+          const base =
+            displayName(realData);
+
+          if (
+            Number(directFilteredHitCount.get(realData.taxid) || 0) > 0
+          ) {
+            return (
+              `${base} (${Number(directFilteredHitCount.get(realData.taxid) || 0)})`
+            );
+          }
+
+          return base;
+        }
+      );
+
+    const visibleCount =
+      descendants.length;
+
+    const filterText =
+      annotationFilterId
+        ? `štítek: ${annotationStore.labels?.[annotationFilterId]?.name || annotationFilterId}`
+        : viewFilter === "hits"
+          ? "jen větve s evidence"
+          : viewFilter === "panther"
+            ? "jen větve s PANTHER family"
+            : viewFilter === "pfam"
+              ? "jen větve s Pfam family"
+              : viewFilter === "family"
+                ? "jen větve s InterPro family"
+                : viewFilter === "alpha-only"
+                ? "jen AlphaFind hity mimo PANTHER family"
+                : viewFilter === "alpha-outside-pfam"
+                  ? "jen AlphaFind hity mimo Pfam family"
+                  : viewFilter === "alpha-outside-family"
+                    ? "jen AlphaFind hity mimo InterPro family"
+                    : "evidence + kontext";
+
+    const scoreFilterText = scoreFilterEnabled
+      ? ` · AlphaFind filtr: ${METRIC_CONFIG[scoreFilterMetric].label} ≥ ${formatNumber(scoreFilterThreshold, scoreFilterMetric === "tm" ? 2 : 1)}${scoreFilterMetric === "tm" ? "" : " %"}`
+      : "";
+
+    statusEl.textContent =
+      `Viditelné uzly: ${visibleCount} · ${filterText}${scoreFilterText}`;
+  }
+
+  // ============================================================
+  // DRILL-DOWN VIEW
+  // ============================================================
+
+  function renderDrilldown() {
+    svg.selectAll("*").remove();
+
+    const current =
+      nodeIndex.get(currentTaxid);
+
+    if (!current) return;
+
+    const children =
+      [...visibleChildren(current)]
+        .sort(
+          (a, b) =>
+            displayName(a)
+              .localeCompare(
+                displayName(b),
+                "cs"
+              )
+        );
+
+    const columnWidth = 240;
+    const topY = 90;
+    const childY = 230;
+
+    const width =
+      Math.max(
+        treeWrap.clientWidth,
+        360 + Math.max(1, children.length) * columnWidth
+      );
+
+    const height =
+      Math.max(
+        treeWrap.clientHeight,
+        520
+      );
+
+    svg
+      .attr("width", width)
+      .attr("height", height)
+      .attr(
+        "viewBox",
+        `0 0 ${width} ${height}`
+      );
+
+    const group =
+      svg.append("g");
+
+    const centerX =
+      width / 2;
+
+    const centerGroup =
+      group
+        .append("g")
+        .attr(
+          "class",
+          `node center-node ${nodeClass(current)}`
+        )
+        .attr(
+          "transform",
+          `translate(${centerX},${topY})`
+        )
+        .attr("data-taxid", String(current.taxid))
+        .on(
+          "click",
+          event => {
+            showInfo(current, event.clientY);
+            if (annotationMode && activeAnnotationId) {
+              toggleAnnotationForTaxon(current);
+            }
+          }
+        );
+
+
+    if (Number(current.taxid) === Number(searchedTaxid)) {
+      centerGroup
+        .append("circle")
+        .attr("class", "search-highlight")
+        .attr("r", 29);
+    }
+
+    appendAnnotationMarkers(centerGroup, () => current);
+
+    if (evidenceClassForNode(current)) {
+      centerGroup
+        .append("circle")
+        .attr(
+          "class",
+          `evidence-ring ${evidenceClassForNode(current)}`
+        )
+        .attr("r", 25);
+    }
+
+    if (hasPfamFamilyDirect(current)) {
+      centerGroup
+        .append("rect")
+        .attr("class", "pfam-marker")
+        .attr("x", 17)
+        .attr("y", -24)
+        .attr("width", 13)
+        .attr("height", 13)
+        .attr("rx", 2);
+    }
+
+    if (hasInterProFamilyDirect(current)) {
+      centerGroup
+        .append("rect")
+        .attr("class", "interpro-family-marker")
+        .attr("x", -28)
+        .attr("y", 16)
+        .attr("width", 12)
+        .attr("height", 12)
+        .attr("transform", "rotate(45)");
+    }
+
+    centerGroup
+      .append("circle")
+      .attr("class", "score-ring")
+      .attr("r", 20)
+      .style(
+        "fill",
+        nodeFill(current)
+      );
+
+    centerGroup
+      .append("circle")
+      .attr("class", "visible-circle")
+      .attr("r", 11);
+
+    centerGroup
+      .append("text")
+      .attr(
+        "class",
+        "center-label"
+      )
+      .attr("x", 0)
+      .attr("y", -22)
+      .attr(
+        "text-anchor",
+        "middle"
+      )
+      .text(
+        displayName(current)
+      );
+
+    if (children.length === 0) {
+      statusEl.textContent =
+        "Tento taxon nemá v aktuálním filtru další zobrazené potomky.";
+
+      showInfo(current);
+      return;
+    }
+
+    const totalWidth =
+      (children.length - 1)
+      * columnWidth;
+
+    const startX =
+      centerX - totalWidth / 2;
+
+    const displayedChildren =
+      children.map(
+        (child, i) => ({
+          data: child,
+          x: startX + i * columnWidth,
+          y: childY
+        })
+      );
+
+    group
+      .append("g")
+      .selectAll("path")
+      .data(displayedChildren)
+      .join("path")
+      .attr(
+        "class",
+        d =>
+          `link ${nodeClass(d.data)}`
+      )
+      .attr(
+        "d",
+        d => {
+          const midY =
+            topY + 60;
+
+          return `
+            M ${centerX} ${topY + 11}
+            V ${midY}
+            H ${d.x}
+            V ${d.y - 18}
+          `;
+        }
+      );
+
+    const childNodes =
+      group
+        .append("g")
+        .selectAll("g")
+        .data(displayedChildren)
+        .join("g")
+        .attr(
+          "class",
+          d => {
+            const clickable =
+              visibleChildren(d.data).length > 0
+                ? " expandable"
+                : "";
+
+            return (
+              `node ${nodeClass(d.data)}${clickable}`
+            );
+          }
+        )
+        .attr(
+          "transform",
+          d =>
+            `translate(${d.x},${d.y})`
+        )
+        .attr("data-taxid", d => String(d.data.taxid))
+        .on(
+          "click",
+          (event, d) => {
+            event.stopPropagation();
+
+            showInfo(
+              d.data,
+              event.clientY
+            );
+
+            if (annotationMode && activeAnnotationId) {
+              toggleAnnotationForTaxon(d.data);
+              return;
+            }
+
+            if (
+              visibleChildren(d.data).length > 0
+            ) {
+              currentTaxid =
+                d.data.taxid;
+
+              render();
+              resetScrollToTopLeft();
+            }
+          }
+        );
+
+    childNodes
+      .append("circle")
+      .attr(
+        "class",
+        "node-hitbox"
+      )
+      .attr(
+        "r",
+        23
+      );
+
+    childNodes
+      .filter(d => Boolean(evidenceClassForNode(d.data)))
+      .append("circle")
+      .attr(
+        "class",
+        d => `evidence-ring ${evidenceClassForNode(d.data)}`
+      )
+      .attr("r", 23);
+
+    childNodes
+      .filter(d => hasPfamFamilyDirect(d.data))
+      .append("rect")
+      .attr("class", "pfam-marker")
+      .attr("x", 15)
+      .attr("y", -22)
+      .attr("width", 12)
+      .attr("height", 12)
+      .attr("rx", 2);
+
+    childNodes
+      .filter(d => hasInterProFamilyDirect(d.data))
+      .append("rect")
+      .attr("class", "interpro-family-marker")
+      .attr("x", -25)
+      .attr("y", 14)
+      .attr("width", 11)
+      .attr("height", 11)
+      .attr("transform", "rotate(45)");
+
+    childNodes
+      .append("circle")
+      .attr(
+        "class",
+        "score-ring"
+      )
+      .attr(
+        "r",
+        18
+      )
+      .style(
+        "fill",
+        d => nodeFill(d.data)
+      );
+
+    childNodes
+      .append("circle")
+      .attr(
+        "class",
+        "visible-circle"
+      )
+      .attr(
+        "r",
+        d =>
+          visibleChildren(d.data).length > 0
+            ? 10
+            : 8
+      );
+
+    childNodes
+      .filter(
+        d =>
+          visibleChildren(d.data).length > 0
+      )
+      .append("text")
+      .attr(
+        "class",
+        "expand-mark"
+      )
+      .attr("x", 0)
+      .attr("y", 1)
+      .text("+");
+
+    childNodes
+      .append("text")
+      .attr("x", 0)
+      .attr("y", 24)
+      .attr(
+        "text-anchor",
+        "middle"
+      )
+      .text(
+        d => {
+          const base =
+            displayName(d.data);
+
+          if (
+            Number(directFilteredHitCount.get(d.data.taxid) || 0) > 0
+          ) {
+            return (
+              `${base} (${Number(directFilteredHitCount.get(d.data.taxid) || 0)})`
+            );
+          }
+
+          return base;
+        }
+      );
+
+    statusEl.textContent =
+      `${displayName(current)}: ${children.length} přímých potomků`;
+
+    showInfo(current);
+  }
+
+  function resetScrollToTopLeft() {
+    requestAnimationFrame(() => {
+      treeWrap.scrollLeft = 0;
+      treeWrap.scrollTop = 0;
+    });
+  }
+
+  function render() {
+    updateBreadcrumb();
+
+    collapseButton.disabled =
+      mode !== "explore";
+
+    if (mode === "explore") {
+      renderExplore();
+    } else {
+      renderDrilldown();
+    }
+  }
+
+  document
+    .getElementById("overview-btn")
+    .addEventListener(
+      "click",
+      () => {
+        mode = "explore";
+        currentTaxid = null;
+        render();
+        resetScrollToTopLeft();
+      }
+    );
+
+  collapseButton
+    .addEventListener(
+      "click",
+      () => {
+        expandedTaxids.clear();
+        mode = "explore";
+        render();
+        resetScrollToTopLeft();
+      }
+    );
+
+  backButton
+    .addEventListener(
+      "click",
+      () => {
+        if (mode !== "drill") return;
+
+        const parentTaxid =
+          parentIndex.get(currentTaxid);
+
+        if (parentTaxid === undefined) {
+          mode = "explore";
+          currentTaxid = null;
+        } else {
+          currentTaxid = parentTaxid;
+        }
+
+        render();
+        resetScrollToTopLeft();
+      }
+    );
+
+  viewFilterSelect
+    .addEventListener(
+      "change",
+      () => {
+        viewFilter =
+          viewFilterSelect.value;
+
+        if (
+          selectedTaxid !== null &&
+          nodeIndex.has(selectedTaxid)
+        ) {
+          showInfo(
+            nodeIndex.get(selectedTaxid)
+          );
+        }
+
+        render();
+      }
+    );
+
+  labelModeSelect
+    .addEventListener(
+      "change",
+      () => {
+        labelMode =
+          labelModeSelect.value;
+
+        if (
+          selectedTaxid !== null &&
+          nodeIndex.has(selectedTaxid)
+        ) {
+          showInfo(
+            nodeIndex.get(selectedTaxid)
+          );
+        }
+
+        render();
+      }
+    );
+
+
+  scoreFilterEnabledInput.addEventListener("change", applyScoreSettings);
+
+  scoreFilterMetricSelect.addEventListener("change", () => {
+    scoreFilterMetric = scoreFilterMetricSelect.value;
+    updateFilterInputForMetric(true);
+    applyScoreSettings();
+  });
+
+  scoreFilterThresholdInput.addEventListener("change", applyScoreSettings);
+  scoreFilterThresholdInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      applyScoreSettings();
+    }
+  });
+
+  colorMetricSelect.addEventListener("change", applyScoreSettings);
+
+
+  organismSearchButton.addEventListener("click", runOrganismSearch);
+  organismSearchInput.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runOrganismSearch();
+    }
+  });
+
+  organismSearchClearButton.addEventListener("click", () => {
+    searchedTaxid = null;
+    searchRevealTaxids.clear();
+    compareSelection = [];
+    updateCompareUI();
+    organismSearchInput.value = "";
+    render();
+  });
+
+  annotationModeInput.addEventListener("change", () => {
+    annotationMode = Boolean(annotationModeInput.checked);
+    refreshAnnotationControls();
+
+    if (annotationMode && !activeAnnotationId) {
+      statusEl.textContent = "Vyber nebo vytvoř štítek a potom klikáním označuj taxony.";
+    }
+  });
+
+  annotationActiveSelect.addEventListener("change", () => {
+    activeAnnotationId = annotationActiveSelect.value;
+    const active = annotationStore.labels?.[activeAnnotationId];
+
+    if (active) {
+      annotationNameInput.value = active.name || "";
+      annotationColorInput.value = active.color || "#2f80ed";
+    }
+  });
+
+  annotationSaveButton.addEventListener("click", () => {
+    const name = String(annotationNameInput.value || "").trim();
+    if (!name) {
+      statusEl.textContent = "Nejdřív napiš název štítku.";
+      return;
+    }
+
+    let id = activeAnnotationId;
+    if (!id || !annotationStore.labels?.[id]) {
+      id = nextAnnotationId();
+    }
+
+    annotationStore.labels[id] = {
+      name,
+      color: annotationColorInput.value || "#2f80ed"
+    };
+
+    activeAnnotationId = id;
+    saveAnnotations();
+    refreshAnnotationControls();
+    computeSubtreeAnnotations(originalData);
+    computeSubtreeProteinAnnotations(originalData);
+    updateFilterSummary();
+    render();
+    statusEl.textContent = `Štítek „${name}“ je uložený.`;
+  });
+
+  annotationDeleteButton.addEventListener("click", () => {
+    if (!activeAnnotationId || !annotationStore.labels?.[activeAnnotationId]) return;
+
+    const name = annotationStore.labels[activeAnnotationId].name || activeAnnotationId;
+    const deletedId = activeAnnotationId;
+
+    delete annotationStore.labels[deletedId];
+
+    for (const [taxid, ids] of Object.entries(annotationStore.assignments || {})) {
+      const remaining = (Array.isArray(ids) ? ids : []).filter(id => id !== deletedId);
+      if (remaining.length) annotationStore.assignments[taxid] = remaining;
+      else delete annotationStore.assignments[taxid];
+    }
+
+    for (const [proteinKey, ids] of Object.entries(annotationStore.protein_assignments || {})) {
+      const remaining = (Array.isArray(ids) ? ids : []).filter(id => id !== deletedId);
+      if (remaining.length) annotationStore.protein_assignments[proteinKey] = remaining;
+      else delete annotationStore.protein_assignments[proteinKey];
+    }
+
+    delete annotationStore.label_notes?.[deletedId];
+
+    if (annotationFilterId === deletedId) annotationFilterId = "";
+    if (proteinTreeFilterId === deletedId) proteinTreeFilterId = "";
+    if (proteinAnnotationFilterId === deletedId) proteinAnnotationFilterId = "";
+    activeAnnotationId = "";
+    annotationNameInput.value = "";
+
+    saveAnnotations();
+    computeSubtreeAnnotations(originalData);
+    computeSubtreeProteinAnnotations(originalData);
+    refreshAnnotationControls();
+    updateFilterSummary();
+    render();
+    statusEl.textContent = `Štítek „${name}“ byl smazán.`;
+  });
+
+  annotationFilterSelect.addEventListener("change", () => {
+    annotationFilterId = annotationFilterSelect.value;
+    mode = "explore";
+    currentTaxid = null;
+    updateFilterSummary();
+    render();
+    resetScrollToTopLeft();
+  });
+
+  proteinTreeFilterSelect?.addEventListener("change", () => {
+    proteinTreeFilterId = proteinTreeFilterSelect.value;
+    mode = "explore";
+    currentTaxid = null;
+    updateFilterSummary();
+    render();
+    resetScrollToTopLeft();
+  });
+
+  // ============================================================
+  // 10. PROJEKTY: DETEKCE, PROJECT.JSON A NAČTENÍ STROMU
+  // ============================================================
+
+  function projectNumber(projectId) {
+    const match = String(projectId || "")
+      .match(/^project(\d+)$/i);
+
+    return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+  }
+
+
+  async function fetchCurrentProjectId() {
+    try {
+      const response = await fetch(
+        CURRENT_PROJECT_URL,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) return null;
+
+      const value = (await response.text()).trim();
+
+      return /^project\d+$/i.test(value)
+        ? value.toLowerCase()
+        : null;
+    }
+    catch (error) {
+      console.warn(
+        "Nepodařilo se načíst current_project.txt:",
+        error
+      );
+      return null;
+    }
+  }
+
+
+  async function loadProjectIndex() {
+    /*
+      Hlavní zdroj pravdy je explicitní:
+          data/processed/projects.json
+
+      Viewer tedy nemusí procházet výpis adresáře.
+      To je přenositelnější a funguje i na serverech,
+      které listing adresářů nepovolují.
+    */
+
+    try {
+      const response = await fetch(
+        PROJECT_INDEX_URL,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `${response.status} ${response.statusText}`
+        );
+      }
+
+      const projects = await response.json();
+
+      if (!Array.isArray(projects)) {
+        throw new Error(
+          "projects.json není JSON seznam."
+        );
+      }
+
+      return projects
+        .filter(
+          project =>
+            /^project\d+$/i.test(
+              String(
+                project?.project_id || ""
+              )
+            )
+        )
+        .sort(
+          (a, b) =>
+            projectNumber(a.project_id)
+            - projectNumber(b.project_id)
+        );
+    }
+    catch (error) {
+      console.warn(
+        "Nepodařilo se načíst projects.json:",
+        error
+      );
+
+      /*
+        Fallback pro starší projektovou strukturu:
+        pokud index ještě není vytvořený, zkusíme alespoň
+        current_project.txt, aby viewer nebyl úplně nepoužitelný.
+      */
+      const currentId =
+        await fetchCurrentProjectId();
+
+      if (!currentId) {
+        return [];
+      }
+
+      return [
+        {
+          project_id: currentId,
+          name: currentId,
+          tree_json: "alphafind_tree.json"
+        }
+      ];
+    }
+  }
+
+
+  async function loadProjectMeta(projectId) {
+    const url =
+      `${PROCESSED_ROOT_URL}${projectId}/project.json`;
+
+    try {
+      const response = await fetch(
+        url,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `${response.status} ${response.statusText}`
+        );
+      }
+
+      const meta = await response.json();
+
+      return {
+        project_id: meta.project_id || projectId,
+        name: meta.name || projectId,
+        input_csv: meta.input_csv || null,
+        created_at: meta.created_at || null,
+        tree_json: meta.tree_json || "alphafind_tree.json",
+        panther: meta.panther || null,
+        pfam: meta.pfam || null,
+        family: meta.family || null,
+        query_uniprot: meta.query_uniprot || meta.query_accession || meta.query_protein_id || meta.query_id || null,
+        query_protein_name: meta.query_protein_name || meta.query_name || null,
+        query_organism: meta.query_organism || meta.query_taxon_name || meta.organism || null
+      };
+    }
+    catch (error) {
+      console.warn(
+        `project.json pro ${projectId} se nepodařilo načíst:`,
+        error
+      );
+
+      return {
+        project_id: projectId,
+        name: projectId,
+        input_csv: null,
+        created_at: null,
+        tree_json: "alphafind_tree.json",
+        panther: null,
+        pfam: null,
+        family: null,
+        query_uniprot: null,
+        query_protein_name: null,
+        query_organism: null
+      };
+    }
+  }
+
+
+  function resetViewerState() {
+    originalData = null;
+    mode = "explore";
+    currentTaxid = null;
+    selectedTaxid = null;
+    searchedTaxid = null;
+    searchRevealTaxids.clear();
+
+    expandedTaxids.clear();
+    nodeIndex.clear();
+    parentIndex.clear();
+    directFilteredHitCount.clear();
+    subtreeFilteredHitCount.clear();
+    subtreeBestScore.clear();
+    pantherByTaxid.clear();
+    subtreeHasPanther.clear();
+    subtreeHasQuerySubfamily.clear();
+    subtreeHasAlphaOnly.clear();
+    pfamByTaxid.clear();
+    subtreeHasPfam.clear();
+    subtreeHasAlphaOutsidePfam.clear();
+    familyByTaxid.clear();
+    subtreeHasFamily.clear();
+    subtreeHasAlphaOutsideFamily.clear();
+
+    currentPantherEvidence = null;
+    currentPantherUrl = null;
+    pantherMatchedTaxa = 0;
+    pantherUnmatchedTaxa = 0;
+    currentPfamEvidence = null;
+    currentPfamUrl = null;
+    pfamMatchedTaxa = 0;
+    pfamUnmatchedTaxa = 0;
+    currentFamilyEvidence = null;
+    currentFamilyUrl = null;
+    familyMatchedTaxa = 0;
+    familyUnmatchedTaxa = 0;
+
+    const coverageNote =
+      document.getElementById("panther-coverage-note");
+
+    if (coverageNote) {
+      coverageNote.textContent =
+        "PANTHER evidence se načte, pokud je pro projekt dostupná.";
+    }
+
+    const pfamCoverageNote = document.getElementById("pfam-coverage-note");
+    if (pfamCoverageNote) {
+      pfamCoverageNote.textContent =
+        "Pfam evidence se načte, pokud je pro projekt dostupná.";
+    }
+
+    const familyCoverageNote = document.getElementById("family-coverage-note");
+    if (familyCoverageNote) {
+      familyCoverageNote.textContent =
+        "InterPro family evidence se načte, pokud je pro projekt dostupná.";
+    }
+
+    svg.selectAll("*").remove();
+
+    breadcrumbEl.textContent = "";
+    statusEl.textContent = "Načítám projekt…";
+
+    infoEl.style.marginTop = "0px";
+    infoEl.innerHTML =
+      '<p class="muted">Klikni na uzel ve stromu.</p>';
+
+    errorEl.style.display = "none";
+    errorEl.textContent = "";
+
+    annotationMode = false;
+    activeAnnotationId = "";
+    annotationFilterId = "";
+    proteinTreeFilterId = "";
+    proteinAnnotationFilterId = "";
+    annotationModeInput.checked = false;
+    annotationNameInput.value = "";
+    taxonNotes = {};
+    subtreeProteinAnnotationLabels.clear();
+    if (filterSummaryEl) {
+      filterSummaryEl.style.display = "none";
+      filterSummaryEl.innerHTML = "";
+    }
+    compareSelection = [];
+    includeQueryInCompare = false;
+    if (compareQueryCheckbox) compareQueryCheckbox.checked = false;
+    updateCompareUI();
+    refreshAnnotationControls();
+  }
+
+
+  async function loadPantherEvidence(projectId, projectMeta) {
+    const configuredPath =
+      projectMeta?.panther?.evidence_json
+      || "panther/panther_evidence.json";
+
+    currentPantherUrl =
+      `${PROCESSED_ROOT_URL}${projectId}/${configuredPath}`;
+
+    try {
+      const response = await fetch(
+        currentPantherUrl,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.warn(
+            `PANTHER evidence pro ${projectId}:`,
+            `${response.status} ${response.statusText}`
+          );
+        }
+        return null;
+      }
+
+      return await response.json();
+    }
+    catch (error) {
+      console.warn(
+        `PANTHER evidence pro ${projectId} se nepodařilo načíst:`,
+        error
+      );
+      return null;
+    }
+  }
+
+
+  function indexPantherEvidence(evidence) {
+    pantherByTaxid.clear();
+
+    const taxa =
+      evidence && typeof evidence.taxa === "object"
+        ? evidence.taxa
+        : {};
+
+    for (const [taxidText, value] of Object.entries(taxa)) {
+      const taxid = Number(value?.taxid ?? taxidText);
+
+      if (!Number.isFinite(taxid)) continue;
+
+      pantherByTaxid.set(
+        taxid,
+        { ...value, taxid }
+      );
+    }
+
+    pantherMatchedTaxa = 0;
+    pantherUnmatchedTaxa = 0;
+
+    for (const taxid of pantherByTaxid.keys()) {
+      if (nodeIndex.has(taxid)) {
+        pantherMatchedTaxa += 1;
+      } else {
+        pantherUnmatchedTaxa += 1;
+      }
+    }
+
+    const coverageNote =
+      document.getElementById("panther-coverage-note");
+
+    if (coverageNote) {
+      if (pantherByTaxid.size === 0) {
+        coverageNote.textContent =
+          "PANTHER evidence pro tento projekt není načtená.";
+      } else {
+        coverageNote.textContent =
+          `PANTHER: ${pantherMatchedTaxa}/${pantherByTaxid.size} taxonů `
+          + `je už přítomno v tomto taxonomickém stromu. `
+          + `${pantherUnmatchedTaxa} PANTHER taxonů zatím ve stromu chybí.`;
+      }
+    }
+  }
+
+
+  async function loadPfamEvidence(projectId, projectMeta) {
+    const configuredPath =
+      projectMeta?.pfam?.evidence_json
+      || "pfam/pfam_evidence.json";
+
+    currentPfamUrl =
+      `${PROCESSED_ROOT_URL}${projectId}/${configuredPath}`;
+
+    try {
+      const response = await fetch(currentPfamUrl, { cache: "no-store" });
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.warn(`Pfam evidence pro ${projectId}:`, `${response.status} ${response.statusText}`);
+        }
+        return null;
+      }
+      return await response.json();
+    } catch (error) {
+      console.warn(`Pfam evidence pro ${projectId} se nepodařilo načíst:`, error);
+      return null;
+    }
+  }
+
+  function indexPfamEvidence(evidence) {
+    pfamByTaxid.clear();
+
+    const taxa = evidence && typeof evidence.taxa === "object"
+      ? evidence.taxa
+      : {};
+
+    for (const [taxidText, value] of Object.entries(taxa)) {
+      const taxid = Number(value?.taxid ?? taxidText);
+      if (!Number.isFinite(taxid)) continue;
+      pfamByTaxid.set(taxid, { ...value, taxid });
+    }
+
+    pfamMatchedTaxa = 0;
+    pfamUnmatchedTaxa = 0;
+    for (const taxid of pfamByTaxid.keys()) {
+      if (nodeIndex.has(taxid)) pfamMatchedTaxa += 1;
+      else pfamUnmatchedTaxa += 1;
+    }
+
+    const note = document.getElementById("pfam-coverage-note");
+    if (note) {
+      if (pfamByTaxid.size === 0) {
+        note.textContent = "Pfam evidence pro tento projekt není načtená.";
+      } else {
+        const label = evidence?.pfam_id ? `Pfam ${evidence.pfam_id}` : "Pfam";
+        note.textContent =
+          `${label}: ${pfamMatchedTaxa}/${pfamByTaxid.size} taxonů je přítomno ve stromu. `
+          + `${pfamUnmatchedTaxa} Pfam taxonů ve stromu chybí.`;
+      }
+    }
+  }
+
+
+  async function loadFamilyEvidence(projectId, projectMeta) {
+    const configuredPath =
+      projectMeta?.family?.evidence_json
+      || "family/family_evidence.json";
+
+    currentFamilyUrl =
+      `${PROCESSED_ROOT_URL}${projectId}/${configuredPath}`;
+
+    try {
+      const response = await fetch(
+        currentFamilyUrl,
+        { cache: "no-store" }
+      );
+
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.warn(
+            `InterPro family evidence pro ${projectId}:`,
+            `${response.status} ${response.statusText}`
+          );
+        }
+        return null;
+      }
+
+      return await response.json();
+    }
+    catch (error) {
+      console.warn(
+        `InterPro family evidence pro ${projectId} se nepodařilo načíst:`,
+        error
+      );
+      return null;
+    }
+  }
+
+
+  function indexFamilyEvidence(evidence) {
+    familyByTaxid.clear();
+
+    const taxa =
+      evidence && typeof evidence.taxa === "object"
+        ? evidence.taxa
+        : {};
+
+    for (const [taxidText, value] of Object.entries(taxa)) {
+      const taxid = Number(value?.taxid ?? taxidText);
+      if (!Number.isFinite(taxid)) continue;
+      familyByTaxid.set(taxid, { ...value, taxid });
+    }
+
+    familyMatchedTaxa = 0;
+    familyUnmatchedTaxa = 0;
+
+    for (const taxid of familyByTaxid.keys()) {
+      if (nodeIndex.has(taxid)) familyMatchedTaxa += 1;
+      else familyUnmatchedTaxa += 1;
+    }
+
+    const note = document.getElementById("family-coverage-note");
+
+    if (note) {
+      if (familyByTaxid.size === 0) {
+        note.textContent =
+          "InterPro family evidence pro tento projekt není načtená.";
+      } else {
+        const label =
+          evidence?.interpro_id
+            ? `InterPro ${evidence.interpro_id}`
+            : "InterPro family";
+
+        note.textContent =
+          `${label}: ${familyMatchedTaxa}/${familyByTaxid.size} taxonů `
+          + `je přítomno ve stromu. `
+          + `${familyUnmatchedTaxa} InterPro taxonů ve stromu chybí.`;
+      }
+    }
+  }
+
+
+  async function loadProject(projectId) {
+    resetViewerState();
+
+    currentProjectId = projectId;
+    currentProjectMeta =
+      await loadProjectMeta(projectId);
+
+    const treeFile =
+      currentProjectMeta.tree_json
+      || "alphafind_tree.json";
+
+    currentDataUrl =
+      `${PROCESSED_ROOT_URL}${projectId}/${treeFile}`;
+
+    statusEl.textContent =
+      `Načítám ${currentProjectMeta.name}…`;
+
+    document.title =
+      `${currentProjectMeta.name} – AlphaFind + PANTHER + Pfam + InterPro Taxonomy Viewer`;
+
+    try {
+      const [data, pantherEvidence, pfamEvidence, familyEvidence] =
+        await Promise.all([
+          d3.json(currentDataUrl),
+          loadPantherEvidence(projectId, currentProjectMeta),
+          loadPfamEvidence(projectId, currentProjectMeta),
+          loadFamilyEvidence(projectId, currentProjectMeta)
+        ]);
+
+      originalData = data;
+      currentPantherEvidence = pantherEvidence;
+      currentPfamEvidence = pfamEvidence;
+      currentFamilyEvidence = familyEvidence;
+      updateCompareUI();
+
+      indexTree(originalData);
+      refreshOrganismSearchList();
+      loadAnnotations();
+      loadTaxonNotes();
+      computeSubtreeProteinAnnotations(originalData);
+      updateFilterSummary();
+      scoreFilterEnabled = Boolean(scoreFilterEnabledInput.checked);
+      scoreFilterMetric = scoreFilterMetricSelect.value;
+      colorMetric = colorMetricSelect.value;
+      scoreFilterThreshold = finiteNumber(scoreFilterThresholdInput.value)
+        ?? METRIC_CONFIG[scoreFilterMetric].defaultThreshold;
+      updateScoreLegend();
+      computeFilteredAlphaState(originalData);
+      indexPantherEvidence(currentPantherEvidence);
+      computeSubtreePanther(originalData);
+      indexPfamEvidence(currentPfamEvidence);
+      computeSubtreePfam(originalData);
+      indexFamilyEvidence(currentFamilyEvidence);
+      computeSubtreeFamily(originalData);
+      computeSubtreeAlphaOnly(originalData);
+      computeSubtreeAlphaOutsidePfam(originalData);
+      computeSubtreeAlphaOutsideFamily(originalData);
+
+      mode = "explore";
+      viewFilter = viewFilterSelect.value;
+      labelMode = labelModeSelect.value;
+
+      render();
+      resetScrollToTopLeft();
+
+      /*
+        render() nastaví stav typu "Viditelné uzly: ...".
+        Přidáme před něj lidský název projektu.
+      */
+      const pantherStatus =
+        pantherByTaxid.size > 0
+          ? ` · PANTHER ${pantherMatchedTaxa}/${pantherByTaxid.size} taxonů mapováno`
+          : "";
+      const pfamStatus =
+        pfamByTaxid.size > 0
+          ? ` · Pfam ${pfamMatchedTaxa}/${pfamByTaxid.size} taxonů mapováno`
+          : "";
+
+      const familyStatus =
+        familyByTaxid.size > 0
+          ? ` · InterPro ${familyMatchedTaxa}/${familyByTaxid.size} taxonů mapováno`
+          : "";
+
+      statusEl.textContent =
+        `${currentProjectMeta.name} · ${statusEl.textContent}${pantherStatus}${pfamStatus}${familyStatus}`;
+    }
+    catch (error) {
+      console.error(error);
+
+      errorEl.style.display = "block";
+
+      errorEl.textContent = `
+Nepodařilo se načíst projekt:
+
+${currentProjectMeta?.name || projectId}
+
+Technické ID:
+${projectId}
+
+Očekávaný strom:
+${currentDataUrl}
+
+Spusť server z kořene projektu NCBR:
+
+python3 -m http.server 8000
+
+Potom otevři:
+
+http://localhost:8000/viewer/tree_viewer.html
+
+Technická chyba:
+
+${error}
+      `;
+    }
+  }
+
+
+  async function initialiseProjects() {
+    const indexedProjects = await loadProjectIndex();
+    const currentId = await fetchCurrentProjectId();
+
+    const projectIds =
+      indexedProjects.map(
+        project =>
+          String(project.project_id).toLowerCase()
+      );
+
+    projectSelect.innerHTML = "";
+
+    if (projectIds.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "Žádný projekt";
+      projectSelect.appendChild(option);
+      projectSelect.disabled = true;
+
+      errorEl.style.display = "block";
+      errorEl.textContent = `
+Nenašla jsem žádný projekt v:
+
+data/processed/projects.json
+
+Nejdřív zpracuj AlphaFind CSV pomocí TreeRun.sh.
+tree.py vytvoří/aktualizuje index automaticky.
+      `;
+      return;
+    }
+
+    const projectMetas = await Promise.all(
+      indexedProjects.map(
+        async indexedProject => {
+          const projectId =
+            String(
+              indexedProject.project_id
+            ).toLowerCase();
+
+          /*
+            project.json zůstává detailní metadata konkrétního projektu.
+            projects.json je index. Když se oba podaří načíst,
+            project.json může dodat aktuálnější lidský název.
+          */
+          const fileMeta =
+            await loadProjectMeta(projectId);
+
+          return {
+            projectId,
+            meta: {
+              ...indexedProject,
+              ...fileMeta
+            }
+          };
+        }
+      )
+    );
+
+    for (const { projectId, meta } of projectMetas) {
+      const option = document.createElement("option");
+
+      option.value = projectId;
+      option.textContent =
+        meta.name === projectId
+          ? projectId
+          : `${meta.name} (${projectId})`;
+
+      projectSelect.appendChild(option);
+    }
+
+    const initialProjectId =
+      currentId && projectIds.includes(currentId)
+        ? currentId
+        : projectIds[0];
+
+    projectSelect.value = initialProjectId;
+    projectSelect.disabled = false;
+
+    await loadProject(initialProjectId);
+  }
+
+
+  projectSelect.addEventListener(
+    "change",
+    async () => {
+      const projectId = projectSelect.value;
+      if (!projectId) return;
+
+      await loadProject(projectId);
+    }
+  );
+
+
+  updateFilterInputForMetric(false);
+  updateScoreLegend();
+  initialiseProjects();
+
+
+  // ============================================================
+  // POSOUVÁNÍ MYŠÍ: KLIKNI + TÁHNI
+  // ============================================================
+
+  /*
+    Používáme klasické mouse events místo pointer capture.
+    Na desktopu je to pro scrollovací SVG spolehlivější
+    a funguje stejně vodorovně i svisle.
+  */
+
+  let mouseIsDown = false;
+  let isPanning = false;
+  let panStartX = 0;
+  let panStartY = 0;
+  let panStartScrollLeft = 0;
+  let panStartScrollTop = 0;
+  let suppressNextClick = false;
+
+  treeWrap.addEventListener(
+    "mousedown",
+    event => {
+      if (event.button !== 0) return;
+
+      mouseIsDown = true;
+      isPanning = false;
+      suppressNextClick = false;
+
+      panStartX = event.clientX;
+      panStartY = event.clientY;
+
+      panStartScrollLeft =
+        treeWrap.scrollLeft;
+
+      panStartScrollTop =
+        treeWrap.scrollTop;
+
+      /*
+        Default zatím NEblokujeme. Obyčejný klik musí
+        zůstat kliknutím. preventDefault() použijeme
+        až ve chvíli, kdy skutečně táhneme.
+      */
+    }
+  );
+
+  window.addEventListener(
+    "mousemove",
+    event => {
+      if (!mouseIsDown) return;
+
+      const dx =
+        event.clientX - panStartX;
+
+      const dy =
+        event.clientY - panStartY;
+
+      /*
+        Teprve po malém pohybu začneme gesture chápat jako drag.
+        Obyčejný klik na uzel tedy zůstane kliknutím.
+      */
+      if (
+        !isPanning &&
+        (
+          Math.abs(dx) > 4 ||
+          Math.abs(dy) > 4
+        )
+      ) {
+        isPanning = true;
+        suppressNextClick = true;
+
+        treeWrap.classList.add(
+          "dragging"
+        );
+      }
+
+      if (!isPanning) return;
+
+      /*
+        dx řeší pohyb vlevo/vpravo,
+        dy řeší pohyb nahoru/dolů.
+      */
+      treeWrap.scrollLeft =
+        panStartScrollLeft - dx;
+
+      treeWrap.scrollTop =
+        panStartScrollTop - dy;
+
+      event.preventDefault();
+    }
+  );
+
+  function stopPanning() {
+    mouseIsDown = false;
+    isPanning = false;
+
+    treeWrap.classList.remove(
+      "dragging"
+    );
+  }
+
+  window.addEventListener(
+    "mouseup",
+    stopPanning
+  );
+
+  window.addEventListener(
+    "blur",
+    stopPanning
+  );
+
+  /*
+    Pokud uživatel strom opravdu táhl,
+    browser někdy po puštění myši ještě vyšle click.
+    Ten jednorázově zahodíme, aby se omylem
+    nerozbalil uzel pod kurzorem.
+  */
+  treeWrap.addEventListener(
+    "click",
+    event => {
+      if (suppressNextClick) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        suppressNextClick = false;
+      }
+    },
+    true
+  );
+
+  window.addEventListener(
+    "resize",
+    () => {
+      if (originalData) {
+        render();
+      }
+    }
+  );
+</script>
+</body>
+</html>
